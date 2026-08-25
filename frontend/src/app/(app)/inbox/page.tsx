@@ -1,0 +1,182 @@
+import { Inbox } from "lucide-react";
+
+import {
+  ConversationSimulator,
+  type SimulatorConversation,
+} from "@/features/conversation-simulator/components/conversation-simulator";
+import { createConversation, listConversations, getConversation } from "@/services/conversation.server";
+import { processIncomingConversationTurn } from "@/services/conversation-turn.server";
+import { getGym } from "@/services/gym.server";
+import { getBranches } from "@/services/branch.server";
+import { listMessages } from "@/services/message.server";
+import { resolveActiveBranch } from "@/lib/active-branch.server";
+import { getWhatsAppEndpoints } from "@/services/whatsapp-endpoint.server";
+import type { Branch } from "@/types/branch";
+import type { WhatsAppEndpoint } from "@/types/whatsapp-endpoint";
+
+export const dynamic = "force-dynamic";
+
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
+
+async function loadSimulatorData(): Promise<{
+  conversations: SimulatorConversation[];
+  activeEndpoints: WhatsAppEndpoint[];
+  branches: Branch[];
+  error?: string;
+}> {
+  const gymResult = await getGym();
+  if (gymResult.error || !gymResult.data)
+    return {
+      conversations: [],
+      activeEndpoints: [],
+      branches: [],
+      error: gymResult.error ?? "Create your gym profile before starting a simulation.",
+    };
+
+  const gym = gymResult.data;
+
+  // Load branches and endpoints in parallel
+  const [branchesResult, endpointsResult] = await Promise.all([
+    getBranches(gym.id),
+    getWhatsAppEndpoints(gym.id),
+  ]);
+
+  const branches = branchesResult.data ?? [];
+  const activeEndpoints = (endpointsResult.data ?? []).filter((ep) => ep.is_active);
+
+  const branchResult = await resolveActiveBranch();
+  // Fetch simulator conversations
+  const conversationsResult = await listConversations(
+    gym.id,
+    "simulator",
+    branchResult.branch?.id,
+  );
+
+  const conversations = await Promise.all(
+    (conversationsResult.data ?? []).map(async (conversation) => {
+      const messages = await listMessages(conversation.id);
+      return { ...conversation, messages: messages.data ?? [] };
+    }),
+  );
+
+  return { conversations, activeEndpoints, branches };
+}
+
+// ---------------------------------------------------------------------------
+// Server Actions
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a simulated customer conversation.
+ * The selected endpoint determines whether branch_id starts NULL (shared) or resolved (dedicated).
+ */
+async function createSimulatedCustomer(
+  name: string,
+  phone: string,
+  endpointId: string | null,
+) {
+  "use server";
+  const gymResult = await getGym();
+  if (gymResult.error || !gymResult.data)
+    return { error: gymResult.error ?? "Gym profile not found." };
+
+  if (endpointId) {
+    const endpointsResult = await getWhatsAppEndpoints(gymResult.data.id);
+    const targetEndpoint = (endpointsResult.data ?? []).find((e) => e.id === endpointId);
+
+    if (targetEndpoint) {
+      const result = await createConversation({
+        gym_id: gymResult.data.id,
+        branch_id: targetEndpoint.branch_id ?? null,
+        whatsapp_endpoint_id: targetEndpoint.id,
+        customer_name: name.trim() || null,
+        customer_phone: phone.trim(),
+        source: "simulator",
+      });
+      return result.error ? { error: result.error } : { conversationId: result.data!.id };
+    }
+  }
+
+  // Fallback: use active branch
+  const branchResult = await resolveActiveBranch();
+  const result = await createConversation({
+    gym_id: gymResult.data.id,
+    branch_id: branchResult.branch?.id ?? null,
+    whatsapp_endpoint_id: null,
+    customer_name: name.trim() || null,
+    customer_phone: phone.trim(),
+    source: "simulator",
+  });
+  return result.error ? { error: result.error } : { conversationId: result.data!.id };
+}
+
+/**
+ * Sends a message within a simulated conversation.
+ * Uses the exact production conversation turn pipeline.
+ */
+async function sendSimulatorMessage(
+  conversationId: string,
+  content: string,
+) {
+  "use server";
+  const gymResult = await getGym();
+  if (gymResult.error || !gymResult.data)
+    return { error: gymResult.error ?? "Gym profile not found." };
+
+  const convResult = await getConversation(conversationId);
+  if (convResult.error || !convResult.data)
+    return { error: convResult.error ?? "Simulated conversation not found." };
+  const conversation = convResult.data;
+
+  const result = await processIncomingConversationTurn({
+    gymId: gymResult.data.id,
+    endpointId: conversation.whatsapp_endpoint_id ?? undefined,
+    branchId: conversation.branch_id ?? undefined,
+    customerPhone: conversation.customer_phone,
+    customerName: conversation.customer_name,
+    source: "simulator",
+    messageType: "text",
+    content: content.trim(),
+    metadata: { source: "simulator" },
+  });
+
+  if (result.error) return { error: result.error };
+  const messages = await listMessages(conversationId);
+  return { messages: messages.data ?? [] };
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+/** Database-backed demo channel for the production GymFlow AI pipeline. */
+export default async function InboxPage() {
+  const { conversations, activeEndpoints, branches, error } = await loadSimulatorData();
+  return (
+    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-5 flex items-center gap-3">
+        <div className="bg-muted grid size-9 place-items-center rounded-lg">
+          <Inbox aria-hidden className="size-4" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">
+            Conversation Simulator
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            Test the same AI receptionist that handles your real WhatsApp conversations.
+          </p>
+        </div>
+      </div>
+      <ConversationSimulator
+        initialConversations={conversations}
+        initialError={error}
+        activeEndpoints={activeEndpoints}
+        branches={branches}
+        onCreateCustomer={createSimulatedCustomer}
+        onSendMessage={sendSimulatorMessage}
+      />
+    </div>
+  );
+}
