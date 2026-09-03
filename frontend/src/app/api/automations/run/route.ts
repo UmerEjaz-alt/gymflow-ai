@@ -5,6 +5,7 @@ import {
   runAllGymAutomations,
   runGymAutomations,
 } from "@/services/automation-runner.server";
+import { recoverWhatsAppDeliveries } from "@/services/whatsapp-outbox.server";
 
 function isAuthorized(request: NextRequest): boolean {
   const authorization = request.headers.get("authorization");
@@ -46,11 +47,15 @@ async function handleRun(request: NextRequest) {
 
   const gymId = await resolveGymId(request);
   try {
-    const result = await runWithSystemSupabase(() =>
-      gymId ? runGymAutomations(gymId) : runAllGymAutomations(),
-    );
+    const { result, recovered } = await runWithSystemSupabase(async () => {
+      const recovered = await recoverWhatsAppDeliveries(50);
+      const result = gymId
+        ? await runGymAutomations(gymId)
+        : await runAllGymAutomations();
+      return { result, recovered };
+    });
     console.log(
-      `[automation-runner] ${gymId ? `gym=${gymId}` : `gyms=${"gyms" in result ? result.gyms : 1}`} sent=${result.sent} skipped=${result.skipped} failed=${result.failed}`,
+      `[automation-runner] ${gymId ? `gym=${gymId}` : `gyms=${"gyms" in result ? result.gyms : 1}`} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} recovered=${recovered.sent}`,
     );
     return NextResponse.json(result);
   } catch (error) {

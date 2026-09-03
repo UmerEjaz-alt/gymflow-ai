@@ -15,6 +15,7 @@ import {
   ReviewsSection,
   SetupSection,
 } from "@/components/marketing";
+import { AuthRecoveryRedirect } from "@/features/auth/components/auth-recovery-redirect";
 
 const publicDescription =
   "Kroway handles gym customer conversations on WhatsApp, answers questions, captures leads, books visits and follows up.";
@@ -47,6 +48,7 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <>
+      <AuthRecoveryRedirect />
       <a
         href="#main-content"
         className="fixed top-4 left-4 z-[100] -translate-y-24 bg-[#f3eee6] px-4 py-3 text-sm font-semibold text-[#17110e] transition-transform focus:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d9895b]"

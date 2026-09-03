@@ -1,10 +1,19 @@
 /** Minimal server-only Meta WhatsApp Cloud API transport for outbound text. */
 
-type SendTextResult =
-  { data: { whatsappMessageId: string }; error: null } | { data: null; error: string };
+export type WhatsAppSendResult =
+  | { data: { whatsappMessageId: string }; error: null }
+  | {
+      data: null;
+      error: string;
+      /** Safe to retry: Meta definitively did not accept the request. */
+      retryable: boolean;
+      /** A network interruption may have happened after Meta accepted the send. */
+      deliveryMayHaveSucceeded: boolean;
+    };
 
 const MAX_INBOUND_AUDIO_BYTES = 5 * 1024 * 1024;
 const MAX_INBOUND_AUDIO_DURATION_SECONDS = 5 * 60;
+const META_REQUEST_TIMEOUT_MS = 15_000;
 const SUPPORTED_TRANSCRIPTION_MIME_TYPES = new Set([
   "audio/ogg",
   "audio/mpeg",
@@ -39,7 +48,10 @@ export async function downloadWhatsAppAudio(
   try {
     const metadataResponse = await fetch(
       `https://graph.facebook.com/${encodeURIComponent(graphVersion)}/${encodeURIComponent(mediaId)}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(META_REQUEST_TIMEOUT_MS),
+      },
     );
     const metadata = (await metadataResponse.json().catch(() => null)) as {
       url?: string;
@@ -80,6 +92,7 @@ export async function downloadWhatsAppAudio(
     }
     const audioResponse = await fetch(mediaUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(META_REQUEST_TIMEOUT_MS),
     });
     if (!audioResponse.ok) {
       console.error("[WhatsApp Cloud] audio media download failed", {
@@ -137,15 +150,25 @@ export async function sendWhatsAppImage(input: {
   to: string;
   imageUrl: string;
   caption?: string;
-}): Promise<SendTextResult> {
+}): Promise<WhatsAppSendResult> {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const graphVersion = process.env.WHATSAPP_GRAPH_API_VERSION;
   if (!accessToken || !graphVersion)
-    return { data: null, error: "WhatsApp Cloud API is not configured." };
+    return {
+      data: null,
+      error: "WhatsApp Cloud API is not configured.",
+      retryable: false,
+      deliveryMayHaveSucceeded: false,
+    };
   try {
     const url = new URL(input.imageUrl);
     if (url.protocol !== "https:")
-      return { data: null, error: "Image URL must use HTTPS." };
+      return {
+        data: null,
+        error: "Image URL must use HTTPS.",
+        retryable: false,
+        deliveryMayHaveSucceeded: false,
+      };
     const response = await fetch(
       `https://graph.facebook.com/${encodeURIComponent(graphVersion)}/${encodeURIComponent(input.phoneNumberId)}/messages`,
       {
@@ -163,6 +186,7 @@ export async function sendWhatsAppImage(input: {
             ...(input.caption?.trim() ? { caption: input.caption.trim() } : {}),
           },
         }),
+        signal: AbortSignal.timeout(META_REQUEST_TIMEOUT_MS),
       },
     );
     const payload = (await response.json().catch(() => null)) as {
@@ -175,14 +199,24 @@ export async function sendWhatsAppImage(input: {
         status: response.status,
         code: payload?.error?.code,
       });
-      return { data: null, error: "Meta rejected the image message." };
+      return {
+        data: null,
+        error: "Meta rejected the image message.",
+        retryable: response.status === 429 || response.status >= 500,
+        deliveryMayHaveSucceeded: false,
+      };
     }
     return { data: { whatsappMessageId: messageId }, error: null };
   } catch (error) {
     console.error("[WhatsApp Cloud] image delivery network failure", {
       message: error instanceof Error ? error.message : "Unknown error",
     });
-    return { data: null, error: "Meta image delivery failed due to a network error." };
+    return {
+      data: null,
+      error: "Meta image delivery failed due to a network error.",
+      retryable: false,
+      deliveryMayHaveSucceeded: true,
+    };
   }
 }
 
@@ -190,14 +224,24 @@ export async function sendWhatsAppText(input: {
   phoneNumberId: string;
   to: string;
   body: string;
-}): Promise<SendTextResult> {
+}): Promise<WhatsAppSendResult> {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const graphVersion = process.env.WHATSAPP_GRAPH_API_VERSION;
   if (!accessToken || !graphVersion) {
-    return { data: null, error: "WhatsApp Cloud API is not configured." };
+    return {
+      data: null,
+      error: "WhatsApp Cloud API is not configured.",
+      retryable: false,
+      deliveryMayHaveSucceeded: false,
+    };
   }
   if (!input.phoneNumberId || !input.to || !input.body.trim()) {
-    return { data: null, error: "WhatsApp destination or text is missing." };
+    return {
+      data: null,
+      error: "WhatsApp destination or text is missing.",
+      retryable: false,
+      deliveryMayHaveSucceeded: false,
+    };
   }
 
   try {
@@ -215,6 +259,7 @@ export async function sendWhatsAppText(input: {
           type: "text",
           text: { body: input.body },
         }),
+        signal: AbortSignal.timeout(META_REQUEST_TIMEOUT_MS),
       },
     );
     const payload = (await response.json().catch(() => null)) as {
@@ -227,13 +272,23 @@ export async function sendWhatsAppText(input: {
         status: response.status,
         code: payload?.error?.code,
       });
-      return { data: null, error: "Meta rejected the text message." };
+      return {
+        data: null,
+        error: "Meta rejected the text message.",
+        retryable: response.status === 429 || response.status >= 500,
+        deliveryMayHaveSucceeded: false,
+      };
     }
     return { data: { whatsappMessageId: messageId }, error: null };
   } catch (error) {
     console.error("[WhatsApp Cloud] text delivery network failure", {
       message: error instanceof Error ? error.message : "Unknown error",
     });
-    return { data: null, error: "Meta text delivery failed due to a network error." };
+    return {
+      data: null,
+      error: "Meta text delivery failed due to a network error.",
+      retryable: false,
+      deliveryMayHaveSucceeded: true,
+    };
   }
 }

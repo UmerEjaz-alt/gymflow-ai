@@ -60,46 +60,92 @@ function toIsoDate(year: number, month: number, day: number) {
 async function parseSpreadsheet(
   file: File,
 ): Promise<{ headers: string[]; rows: SourceRow[] }> {
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.read(await file.arrayBuffer(), {
-    cellDates: true,
-    cellFormula: false,
-  });
-  const sheet = workbook.Sheets[workbook.SheetNames[0] ?? ""];
-  if (!sheet?.["!ref"]) throw new Error("The file does not contain a worksheet.");
-  const range = XLSX.utils.decode_range(sheet["!ref"]);
-  const cellText = (cell: (typeof sheet)[string] | undefined) => {
-    if (!cell || cell.f) return "";
-    if (cell.t === "d" && cell.v instanceof Date) {
-      return toIsoDate(
-        cell.v.getUTCFullYear(),
-        cell.v.getUTCMonth() + 1,
-        cell.v.getUTCDate(),
-      );
-    }
-    if (cell.t === "n" && cell.z && XLSX.SSF.is_date(cell.z)) {
-      const date = XLSX.SSF.parse_date_code(cell.v as number);
-      return date ? toIsoDate(date.y, date.m, date.d) : "";
-    }
-    return XLSX.utils.format_cell(cell).trim();
-  };
-  const headers = Array.from(
-    { length: range.e.c - range.s.c + 1 },
-    (_, index) =>
-      cellText(sheet[XLSX.utils.encode_cell({ r: range.s.r, c: range.s.c + index })]) ||
-      `Column ${index + 1}`,
+  const matrix = file.name.toLowerCase().endsWith(".csv")
+    ? parseCsv(await file.text())
+    : await readXlsxRows(file);
+  if (!matrix.length) throw new Error("The file does not contain a worksheet.");
+  if (matrix.length > 501)
+    throw new Error("Imports are limited to 500 rows at a time.");
+
+  const width = Math.max(...matrix.map((row) => row.length));
+  const headers = Array.from({ length: width }, (_, index) =>
+    cellText(matrix[0]?.[index]) || `Column ${index + 1}`,
   );
   const rows: SourceRow[] = [];
-  for (let row = range.s.r + 1; row <= range.e.r; row += 1) {
+  for (let row = 1; row < matrix.length; row += 1) {
     const values = Object.fromEntries(
       headers.map((header, index) => [
         header,
-        cellText(sheet[XLSX.utils.encode_cell({ r: row, c: range.s.c + index })]),
+        cellText(matrix[row]?.[index]),
       ]),
     );
     if (Object.values(values).some(Boolean)) rows.push({ number: row + 1, values });
   }
   return { headers, rows };
+}
+
+function cellText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) {
+    return toIsoDate(
+      value.getUTCFullYear(),
+      value.getUTCMonth() + 1,
+      value.getUTCDate(),
+    );
+  }
+  return String(value).trim();
+}
+
+async function readXlsxRows(file: File): Promise<unknown[][]> {
+  const { readSheet } = await import("read-excel-file/browser");
+  return (await readSheet(file, { trim: true })).map((row) => [...row]);
+}
+
+/** Small RFC 4180-style reader for the bounded CSV import path. */
+function parseCsv(source: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let quoted = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    if (quoted) {
+      if (character === '"' && source[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = false;
+      } else {
+        value += character;
+      }
+      continue;
+    }
+    if (character === '"' && value.length === 0) {
+      quoted = true;
+    } else if (character === ",") {
+      row.push(value);
+      value = "";
+    } else if (character === "\n") {
+      row.push(value.replace(/\r$/, ""));
+      rows.push(row);
+      if (rows.length > 501)
+        throw new Error("Imports are limited to 500 rows at a time.");
+      row = [];
+      value = "";
+    } else {
+      value += character;
+    }
+  }
+  if (quoted) throw new Error("The CSV file contains an unclosed quoted value.");
+  if (value || row.length) {
+    row.push(value.replace(/\r$/, ""));
+    rows.push(row);
+  }
+  if (rows[0]?.[0]?.charCodeAt(0) === 0xfeff) {
+    rows[0][0] = rows[0][0].slice(1);
+  }
+  return rows;
 }
 
 type Props = {

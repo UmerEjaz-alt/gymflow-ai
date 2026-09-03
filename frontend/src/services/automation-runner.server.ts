@@ -22,6 +22,7 @@ import {
 import { generateValidatedReply } from "@/services/ai-pipeline.server";
 import { buildAutomationConversationContext } from "@/services/conversation-manager.server";
 import { saveAIReply } from "@/services/conversation-reply.server";
+import { deliverWhatsAppMessage } from "@/services/whatsapp-outbox.server";
 import { getAllGymIds, getBranchIds } from "@/services/branch.server";
 import { listConversations } from "@/services/conversation.server";
 import { listMessages } from "@/services/message.server";
@@ -116,14 +117,30 @@ async function runTurn(
     trigger_key: triggerKey,
   });
   if (claim.error || !claim.data) return "skipped";
+  const claimToken = claim.data.claim_token;
+  if (!claimToken) return "failed";
 
   // ── Auto-send guard ──────────────────────────────────────────────────────
   if (!config.auto_send) {
-    await completeAutomationExecution(claim.data.id, {
+    await completeAutomationExecution(claim.data.id, claimToken, {
       status: "skipped",
       error_message: "Automatic sending is disabled for this automation.",
     });
     return "skipped";
+  }
+
+  // A previous attempt may have generated the message but failed at Meta.
+  // Retry that durable outbox row without generating another AI response or
+  // repeating any business mutation.
+  if (claim.data.sent_message_id) {
+    const delivery = await deliverWhatsAppMessage(claim.data.sent_message_id);
+    await completeAutomationExecution(claim.data.id, claimToken, {
+      status: delivery === "sent" ? "sent" : "failed",
+      sent_message_id: claim.data.sent_message_id,
+      error_message:
+        delivery === "sent" ? null : `WhatsApp delivery outcome: ${delivery}`,
+    });
+    return delivery === "sent" ? "sent" : "failed";
   }
 
   // ── Build context ────────────────────────────────────────────────────────
@@ -132,7 +149,7 @@ async function runTurn(
     instruction,
   });
   if (contextResult.error || !contextResult.data) {
-    await completeAutomationExecution(claim.data.id, {
+    await completeAutomationExecution(claim.data.id, claimToken, {
       status: "failed",
       error_message: contextResult.error ?? "Conversation context unavailable.",
     });
@@ -144,7 +161,7 @@ async function runTurn(
   try {
     const pipeline = await generateValidatedReply(contextResult.data);
     if (pipeline.action !== "knowledge_ready" || !pipeline.validatedResponse) {
-      await completeAutomationExecution(claim.data.id, {
+      await completeAutomationExecution(claim.data.id, claimToken, {
         status: "skipped",
         error_message: `Pipeline action: ${pipeline.action}`,
       });
@@ -157,22 +174,36 @@ async function runTurn(
       pipeline.aiResponse?.model ?? "unknown",
       pipeline.knowledge?.media ?? [],
       pipeline.knowledge?.allBranches?.map((branch) => branch.id) ?? [],
+      null,
+      null,
+      true,
     );
     if (!saved.saved) {
-      await completeAutomationExecution(claim.data.id, {
+      await completeAutomationExecution(claim.data.id, claimToken, {
         status: "failed",
         error_message: saved.error ?? "Reply was not saved.",
       });
       return "failed";
     }
 
-    await completeAutomationExecution(claim.data.id, {
-      status: "sent",
-      sent_message_id: saved.messageId ?? null,
+    const messageId = saved.messageId;
+    if (!messageId) {
+      await completeAutomationExecution(claim.data.id, claimToken, {
+        status: "failed",
+        error_message: "Reply was saved without a deliverable message ID.",
+      });
+      return "failed";
+    }
+    const delivery = await deliverWhatsAppMessage(messageId);
+    await completeAutomationExecution(claim.data.id, claimToken, {
+      status: delivery === "sent" ? "sent" : "failed",
+      sent_message_id: messageId,
+      error_message:
+        delivery === "sent" ? null : `WhatsApp delivery outcome: ${delivery}`,
     });
-    return "sent";
+    return delivery === "sent" ? "sent" : "failed";
   } catch (error) {
-    await completeAutomationExecution(claim.data.id, {
+    await completeAutomationExecution(claim.data.id, claimToken, {
       status: "failed",
       error_message: error instanceof Error ? error.message : "AI generation failed.",
     });

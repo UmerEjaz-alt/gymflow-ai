@@ -1,6 +1,7 @@
 "use client";
 
 import { LoaderCircle } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
@@ -22,7 +23,7 @@ export function LoginForm() {
     setIsSubmitting(true);
 
     try {
-      const result = await signInWithPassword({ email, password });
+      const result = await signInWithPassword({ email: email.trim(), password });
 
       if (result.error) {
         setError(result.error);
@@ -55,9 +56,17 @@ export function LoginForm() {
         />
       </div>
       <div className="space-y-2">
-        <label className="text-sm font-medium" htmlFor="password">
-          Password
-        </label>
+        <div className="flex items-center justify-between">
+          <label className="text-sm font-medium" htmlFor="password">
+            Password
+          </label>
+          <Link
+            className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
+            href="/reset-password"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <Input
           autoComplete="current-password"
           id="password"

@@ -30,4 +30,6 @@ export type AutomationExecution = {
   sent_message_id: string | null;
   created_at: string;
   completed_at: string | null;
+  claim_token?: string | null;
+  lease_expires_at?: string | null;
 };

@@ -52,6 +52,7 @@ export async function saveAIReply(
   allowedBranchIds: string[] = [],
   resolvedBranchSelectionId: string | null = null,
   resolvedTurn: ResolvedTurnContext | null = null,
+  queueWhatsAppDelivery = false,
 ): Promise<SaveAIReplyResult> {
   // Guard: skip unapproved responses without writing anything
   if (!response.approved) {
@@ -186,6 +187,7 @@ export async function saveAIReply(
             model,
             understanding: response.understanding,
             fallback_used: response.usedFallback,
+            ...(queueWhatsAppDelivery ? { outbound_delivery: "whatsapp_outbox" } : {}),
             ...(attachPendingMedia ? { pending_media: response.pendingMedia } : {}),
             ...(isText && resolvedTurn
               ? {
@@ -203,6 +205,7 @@ export async function saveAIReply(
             media_url: asset!.media_url,
             title: asset!.title,
             model,
+            ...(queueWhatsAppDelivery ? { outbound_delivery: "whatsapp_outbox" } : {}),
           },
     });
     if (result.error)

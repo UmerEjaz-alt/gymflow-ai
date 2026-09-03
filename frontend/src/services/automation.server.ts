@@ -53,48 +53,25 @@ export async function createAutomationExecution(input: {
   trigger_key: string;
 }): Promise<Result<AutomationExecution>> {
   const supabase = await createServerSupabaseClient();
-
-  // Guard: if a "sent" row already exists for this (config, conversation, trigger_key),
-  // do not overwrite a successful delivery.
-  // If "failed" or "pending", reset to "pending" so the scheduler can retry.
-  const { data: existing } = await supabase
-    .from("automation_executions")
-    .select("id, status")
-    .eq("automation_config_id", input.automation_config_id)
-    .eq("conversation_id", input.conversation_id)
-    .eq("trigger_key", input.trigger_key)
-    .maybeSingle();
-
-  if (existing) {
-    if (existing.status === "sent") {
-      return { data: null, error: "Execution already sent for this trigger key." };
-    }
-    const { data, error } = await supabase
-      .from("automation_executions")
-      .update({
-        status: "pending",
-        error_message: null,
-        sent_message_id: null,
-        completed_at: null,
-      })
-      .eq("id", existing.id)
-      .select()
-      .single();
-    if (error) return { data: null, error: error.message };
-    return { data: data as AutomationExecution, error: null };
-  }
-
-  const { data, error } = await supabase
-    .from("automation_executions")
-    .insert({ ...input, status: "pending" })
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc("claim_automation_execution", {
+    p_gym_id: input.gym_id,
+    p_branch_id: input.branch_id ?? null,
+    p_automation_config_id: input.automation_config_id,
+    p_conversation_id: input.conversation_id,
+    p_membership_id: input.membership_id ?? null,
+    p_trigger_key: input.trigger_key,
+    p_lease_seconds: 300,
+  });
   if (error) return { data: null, error: error.message };
-  return { data: data as AutomationExecution, error: null };
+  const row = Array.isArray(data) ? data[0] : null;
+  return row
+    ? { data: row as AutomationExecution, error: null }
+    : { data: null, error: "Execution is already complete or actively claimed." };
 }
 
 export async function completeAutomationExecution(
   id: string,
+  claimToken: string,
   patch: Pick<AutomationExecution, "status"> & {
     error_message?: string | null;
     sent_message_id?: string | null;
@@ -103,12 +80,20 @@ export async function completeAutomationExecution(
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("automation_executions")
-    .update({ ...patch, completed_at: new Date().toISOString() })
+    .update({
+      ...patch,
+      completed_at: new Date().toISOString(),
+      claim_token: null,
+      lease_expires_at: null,
+    })
     .eq("id", id)
+    .eq("claim_token", claimToken)
     .select()
-    .single();
+    .maybeSingle();
   if (error) return { data: null, error: error.message };
-  return { data: data as AutomationExecution, error: null };
+  return data
+    ? { data: data as AutomationExecution, error: null }
+    : { data: null, error: "Automation execution claim is no longer owned." };
 }
 
 export async function countSentAutomationExecutions(

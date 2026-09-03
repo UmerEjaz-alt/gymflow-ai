@@ -4,16 +4,30 @@ import { processIncomingConversationTurn } from "@/services/conversation-turn.se
 import { resolveWhatsAppEndpoint } from "@/services/whatsapp-endpoint.server";
 import { runWithSystemSupabase } from "@/lib/supabase/request-context";
 import { normalizeIncomingMessageWebhooks } from "@/services/whatsapp-normalizer";
-import {
-  getMessageByWhatsAppMessageId,
-  updateMessage,
-} from "@/services/message.server";
-import {
-  downloadWhatsAppAudio,
-  sendWhatsAppImage,
-  sendWhatsAppText,
-} from "@/services/whatsapp-cloud-api.server";
+import { getMessageByWhatsAppMessageId } from "@/services/message.server";
+import { downloadWhatsAppAudio } from "@/services/whatsapp-cloud-api.server";
 import { transcribeWhatsAppVoiceNote } from "@/services/gemini-transcription.server";
+import { verifyWhatsAppWebhookSignature } from "@/lib/whatsapp-webhook-auth.server";
+import {
+  deliverWhatsAppMessage,
+  hasRecoverableWhatsAppDeliveries,
+  prepareWhatsAppDelivery,
+  recoverWhatsAppDeliveries,
+} from "@/services/whatsapp-outbox.server";
+import {
+  consumeDurableRateLimit,
+  rateLimitBucket,
+} from "@/services/durable-rate-limit.server";
+
+export const runtime = "nodejs";
+
+const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
+const AI_CUSTOMER_LIMIT = 30;
+const AI_GYM_LIMIT = 300;
+const AI_WINDOW_SECONDS = 10 * 60;
+const VOICE_CUSTOMER_LIMIT = 5;
+const VOICE_GYM_LIMIT = 50;
+const VOICE_WINDOW_SECONDS = 60 * 60;
 
 // ---------------------------------------------------------------------------
 // GET — Meta webhook verification handshake
@@ -51,12 +65,46 @@ export function GET(request: NextRequest): NextResponse {
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  if (!appSecret) {
+    console.error("[WhatsApp webhook] WHATSAPP_APP_SECRET is not set.");
+    return NextResponse.json(
+      { error: "Webhook authentication is not configured." },
+      { status: 503 },
+    );
+  }
+
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > MAX_WEBHOOK_BODY_BYTES) {
+    return NextResponse.json({ error: "Request is too large." }, { status: 413 });
+  }
+
+  let rawBodyBytes: Buffer;
+  try {
+    rawBodyBytes = Buffer.from(await request.arrayBuffer());
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  if (rawBodyBytes.byteLength > MAX_WEBHOOK_BODY_BYTES) {
+    return NextResponse.json({ error: "Request is too large." }, { status: 413 });
+  }
+
+  if (
+    !verifyWhatsAppWebhookSignature(
+      rawBodyBytes,
+      request.headers.get("x-hub-signature-256"),
+      appSecret,
+    )
+  ) {
+    return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
+  }
+
   // ── Parse body ─────────────────────────────────────────────────────────
 
   let payload: unknown;
 
   try {
-    payload = await request.json();
+    payload = JSON.parse(rawBodyBytes.toString("utf8")) as unknown;
   } catch {
     // Malformed JSON — return 200 so Meta does not retry.
     return NextResponse.json({ success: true }, { status: 200 });
@@ -74,6 +122,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // ── Process ────────────────────────────────────────────────────────────
 
+  let retryRequested = false;
   for (const event of events) {
     const result = await runWithSystemSupabase(async () => {
       const destination = await resolveWhatsAppEndpoint(
@@ -85,21 +134,45 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return { error: "Unmapped WhatsApp destination." };
       }
 
-      // Avoid downloading/transcribing the same Meta voice note when Meta
-      // retries a webhook already persisted by this process or another worker.
-      if (event.messageType === "audio") {
-        const existing = await getMessageByWhatsAppMessageId(event.whatsappMessageId);
-        if (existing.error) return { error: existing.error };
-        if (existing.data) {
-          return {
-            result: {
-              customerMessage: existing.data,
-              aiMessage: null,
-              action: "duplicate",
-              error: null,
-            },
-          };
+      // Check every supported type before consuming cost budget. A duplicate
+      // webhook becomes an opportunity to recover its previously queued reply.
+      const existing = await getMessageByWhatsAppMessageId(event.whatsappMessageId);
+      if (existing.error) return { error: existing.error };
+      if (existing.data) {
+        return {
+          result: {
+            customerMessage: existing.data,
+            aiMessage: null,
+            action: "duplicate",
+            error: null,
+          },
+        };
+      }
+
+      let suppressAI = false;
+      try {
+        const [customerBudget, gymBudget] = await Promise.all([
+          consumeDurableRateLimit({
+            bucket: rateLimitBucket(
+              "whatsapp-ai-customer",
+              destination.data.gymId,
+              event.customerPhone,
+            ),
+            limit: AI_CUSTOMER_LIMIT,
+            windowSeconds: AI_WINDOW_SECONDS,
+          }),
+          consumeDurableRateLimit({
+            bucket: rateLimitBucket("whatsapp-ai-gym", destination.data.gymId),
+            limit: AI_GYM_LIMIT,
+            windowSeconds: AI_WINDOW_SECONDS,
+          }),
+        ]);
+        if (customerBudget.error || gymBudget.error) {
+          return { error: "Durable AI rate limiter is unavailable." };
         }
+        suppressAI = !customerBudget.allowed || !gymBudget.allowed;
+      } catch {
+        return { error: "Durable AI rate limiter is not configured." };
       }
 
       let content = event.content;
@@ -112,10 +185,43 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       };
 
       if (event.messageType === "audio") {
+        try {
+          const [customerVoiceBudget, gymVoiceBudget] = await Promise.all([
+            consumeDurableRateLimit({
+              bucket: rateLimitBucket(
+                "whatsapp-voice-customer",
+                destination.data.gymId,
+                event.customerPhone,
+              ),
+              limit: VOICE_CUSTOMER_LIMIT,
+              windowSeconds: VOICE_WINDOW_SECONDS,
+            }),
+            consumeDurableRateLimit({
+              bucket: rateLimitBucket("whatsapp-voice-gym", destination.data.gymId),
+              limit: VOICE_GYM_LIMIT,
+              windowSeconds: VOICE_WINDOW_SECONDS,
+            }),
+          ]);
+          if (customerVoiceBudget.error || gymVoiceBudget.error) {
+            return { error: "Durable transcription rate limiter is unavailable." };
+          }
+          suppressAI ||= !customerVoiceBudget.allowed || !gymVoiceBudget.allowed;
+        } catch {
+          return { error: "Durable transcription rate limiter is not configured." };
+        }
+
+        if (suppressAI) {
+          content = "[Voice note received while automated processing was limited]";
+          metadata.voice_transcription = { status: "rate_limited" };
+        }
         const mediaId =
           typeof event.metadata.id === "string" ? event.metadata.id : null;
-        const downloaded = mediaId ? await downloadWhatsAppAudio(mediaId) : null;
-        if (!downloaded?.data) {
+        const downloaded =
+          !suppressAI && mediaId ? await downloadWhatsAppAudio(mediaId) : null;
+        if (suppressAI) {
+          // The inbound event is still persisted for staff visibility, but no
+          // provider call or automatic outbound message is generated.
+        } else if (!downloaded?.data) {
           content = "[Voice note could not be transcribed]";
           safeFallbackReplyText = downloaded?.limitExceeded
             ? "That voice note is a bit too long. Please send a shorter one or type your message."
@@ -157,6 +263,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           whatsappMessageId: event.whatsappMessageId,
           metadata,
           safeFallbackReplyText,
+          suppressAI,
         }),
       };
     });
@@ -169,7 +276,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       continue;
     }
     const turn = result.result;
-    if (turn.action === "duplicate" || !turn.aiMessage) continue;
+    if (turn.action === "duplicate") {
+      if (turn.customerMessage) {
+        await runWithSystemSupabase(() =>
+          recoverWhatsAppDeliveries(10, turn.customerMessage!.conversation_id),
+        );
+        retryRequested ||= await runWithSystemSupabase(() =>
+          hasRecoverableWhatsAppDeliveries(turn.customerMessage!.conversation_id),
+        );
+      }
+      continue;
+    }
+    if (!turn.aiMessage) continue;
     if (!event.recipientPhoneNumberId) {
       console.error(
         "[WhatsApp webhook] reply not delivered: endpoint has no Meta phone_number_id",
@@ -180,47 +298,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       continue;
     }
     for (const message of turn.outboundMessages ?? [turn.aiMessage]) {
-      const imageUrl =
-        typeof message.metadata?.media_url === "string"
-          ? message.metadata.media_url
-          : null;
-      const delivery =
-        message.message_type === "image" && imageUrl
-          ? await sendWhatsAppImage({
-              phoneNumberId: event.recipientPhoneNumberId,
-              to: event.customerPhone,
-              imageUrl,
-              caption: message.content,
-            })
-          : message.message_type === "text"
-            ? await sendWhatsAppText({
-                phoneNumberId: event.recipientPhoneNumberId,
-                to: event.customerPhone,
-                body: message.content,
-              })
-            : null;
-      if (!delivery) continue;
-      if (delivery.error) {
-        console.error("[WhatsApp webhook] reply delivery failed", {
+      const outcome = await runWithSystemSupabase(async () => {
+        await prepareWhatsAppDelivery(message.id, event.recipientPhoneNumberId!);
+        return deliverWhatsAppMessage(message.id);
+      });
+      if (outcome !== "sent") {
+        console.error("[WhatsApp webhook] reply was queued but not delivered", {
           inboundMessageId: event.whatsappMessageId,
           messageId: message.id,
-          error: delivery.error,
+          outcome,
         });
-        continue;
       }
-      const saved = await runWithSystemSupabase(() =>
-        updateMessage(message.id, {
-          whatsapp_message_id: delivery.data!.whatsappMessageId,
-          delivered_at: new Date().toISOString(),
-        }),
-      );
-      if (saved.error)
-        console.error(
-          "[WhatsApp webhook] reply delivered but delivery ID was not persisted",
-          { inboundMessageId: event.whatsappMessageId, messageId: message.id },
-        );
+      retryRequested ||= outcome === "retryable_failure";
+      if (outcome !== "sent") break;
     }
   }
 
-  return NextResponse.json({ success: true }, { status: 200 });
+  return retryRequested
+    ? NextResponse.json(
+        { error: "Outbound delivery is pending retry." },
+        { status: 503 },
+      )
+    : NextResponse.json({ success: true }, { status: 200 });
 }

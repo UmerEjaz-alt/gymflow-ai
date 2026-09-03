@@ -15,7 +15,11 @@ export async function signInWithPassword({
   password,
 }: SignInCredentials): Promise<AuthResult> {
   const supabase = createBrowserSupabaseClient();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const normalizedEmail = email.trim();
+  const { error } = await supabase.auth.signInWithPassword({
+    email: normalizedEmail,
+    password,
+  });
 
   return { error: error?.message ?? null };
 }
@@ -24,6 +28,28 @@ export async function signInWithPassword({
 export async function signOut(): Promise<AuthResult> {
   const supabase = createBrowserSupabaseClient();
   const { error } = await supabase.auth.signOut();
+
+  return { error: error?.message ?? null };
+}
+
+/** Requests a password recovery email from Supabase Auth. */
+export async function requestPasswordReset(
+  email: string,
+  redirectTo?: string,
+): Promise<AuthResult> {
+  const supabase = createBrowserSupabaseClient();
+  const normalizedEmail = email.trim();
+  const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+    redirectTo,
+  });
+
+  return { error: error?.message ?? null };
+}
+
+/** Sets a new password for the current recovery session. */
+export async function updateUserPassword(password: string): Promise<AuthResult> {
+  const supabase = createBrowserSupabaseClient();
+  const { error } = await supabase.auth.updateUser({ password });
 
   return { error: error?.message ?? null };
 }

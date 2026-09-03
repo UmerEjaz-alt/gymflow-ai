@@ -82,7 +82,10 @@ export async function processIncomingConversationTurn(
       sender_type: "ai",
       message_type: "text",
       content: event.safeFallbackReplyText,
-      metadata: { system_fallback: "voice_transcription_failed" },
+      metadata: {
+        system_fallback: "voice_transcription_failed",
+        ...(event.whatsappMessageId ? { outbound_delivery: "whatsapp_outbox" } : {}),
+      },
     });
     if (fallbackResult.error) {
       return {
@@ -97,6 +100,15 @@ export async function processIncomingConversationTurn(
       aiMessage: fallbackResult.data!,
       outboundMessages: [fallbackResult.data!],
       action: "voice_transcription_failed",
+      error: null,
+    };
+  }
+
+  if (!context.shouldCallAI) {
+    return {
+      customerMessage: context.latestCustomerMessage,
+      aiMessage: null,
+      action: context.humanTakeover ? "human_takeover" : "no_reply",
       error: null,
     };
   }
@@ -207,6 +219,7 @@ export async function processIncomingConversationTurn(
       pipelineResult.knowledge?.allBranches?.map((branch) => branch.id) ?? [],
       resolvedBranchSelectionId,
       persistedTurn,
+      Boolean(event.whatsappMessageId),
     );
 
     if (!saveResult.saved) {

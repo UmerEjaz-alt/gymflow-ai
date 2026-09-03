@@ -36,7 +36,14 @@ export async function resolveWhatsAppEndpoint(
     },
   );
 
-  if (!rpcError && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
+  if (rpcError) {
+    // Routing is a security boundary. The database resolver contains the only
+    // supported legacy compatibility path and knows whether a matching endpoint
+    // was explicitly disabled; bypassing it here could reactivate that endpoint.
+    return { data: null, error: "WhatsApp endpoint resolution failed." };
+  }
+
+  if (rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
     const row = rpcData[0] as {
       gym_id: string;
       endpoint_id: string | null;
@@ -50,68 +57,6 @@ export async function resolveWhatsAppEndpoint(
       },
       error: null,
     };
-  }
-
-  // Graceful fallback to querying branches directly if RPC or table is pending migration
-  if (phoneNumberId) {
-    const { data: branchByMetaId } = await supabase
-      .from("branches")
-      .select("id, gym_id")
-      .eq("whatsapp_phone_number_id", phoneNumberId)
-      .maybeSingle();
-
-    if (branchByMetaId) {
-      return {
-        data: {
-          gymId: branchByMetaId.gym_id,
-          endpointId: null,
-          branchId: branchByMetaId.id,
-        },
-        error: null,
-      };
-    }
-  }
-
-  if (displayPhone) {
-    const normalized = displayPhone.replace(/\D/g, "");
-    if (normalized) {
-      const { data: branches } = await supabase
-        .from("branches")
-        .select("id, gym_id, whatsapp_number");
-
-      const matchedBranch = (branches ?? []).find(
-        (b) => (b.whatsapp_number ?? "").replace(/\D/g, "") === normalized,
-      );
-
-      if (matchedBranch) {
-        return {
-          data: {
-            gymId: matchedBranch.gym_id,
-            endpointId: null,
-            branchId: matchedBranch.id,
-          },
-          error: null,
-        };
-      }
-
-      // Check gym-level whatsapp_number (shared gym line)
-      const { data: gyms } = await supabase.from("gyms").select("id, whatsapp_number");
-
-      const matchedGym = (gyms ?? []).find(
-        (g) => (g.whatsapp_number ?? "").replace(/\D/g, "") === normalized,
-      );
-
-      if (matchedGym) {
-        return {
-          data: {
-            gymId: matchedGym.id,
-            endpointId: null,
-            branchId: null,
-          },
-          error: null,
-        };
-      }
-    }
   }
 
   return { data: null, error: null };

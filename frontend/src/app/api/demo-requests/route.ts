@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { createSystemSupabaseClient } from "@/lib/supabase/system";
 import { sendDemoRequestNotification } from "@/services/demo-notification.server";
+import {
+  consumeDurableRateLimit,
+  rateLimitBucket,
+} from "@/services/durable-rate-limit.server";
 
 export const runtime = "nodejs";
 
@@ -12,10 +16,7 @@ type DemoRequestBody = Partial<Record<FieldName | "website", unknown>> & {
   startedAt?: unknown;
 };
 
-type RateBucket = { count: number; resetAt: number };
-
-const rateBuckets = new Map<string, RateBucket>();
-const RATE_WINDOW_MS = 10 * 60 * 1000;
+const RATE_WINDOW_SECONDS = 10 * 60;
 const RATE_LIMIT = 5;
 
 function compact(value: unknown, maxLength: number): string {
@@ -38,28 +39,6 @@ function clientKey(request: NextRequest): string {
     request.headers.get("x-real-ip") ||
     "unknown"
   );
-}
-
-function isRateLimited(key: string): boolean {
-  const now = Date.now();
-  const existing = rateBuckets.get(key);
-
-  if (!existing || existing.resetAt <= now) {
-    rateBuckets.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return false;
-  }
-
-  existing.count += 1;
-  if (rateBuckets.size > 500) {
-    for (const [bucketKey, bucket] of rateBuckets) {
-      if (bucket.resetAt <= now) rateBuckets.delete(bucketKey);
-    }
-  }
-  if (rateBuckets.size > 1000) {
-    const oldestKey = rateBuckets.keys().next().value as string | undefined;
-    if (oldestKey) rateBuckets.delete(oldestKey);
-  }
-  return existing.count > RATE_LIMIT;
 }
 
 function validationErrors(body: DemoRequestBody) {
@@ -139,7 +118,19 @@ export async function POST(request: NextRequest) {
     return noStoreJson({ ok: true });
   }
 
-  if (isRateLimited(clientKey(request))) {
+  const limiter = await consumeDurableRateLimit({
+    bucket: rateLimitBucket("demo-ip", clientKey(request)),
+    limit: RATE_LIMIT,
+    windowSeconds: RATE_WINDOW_SECONDS,
+  });
+  if (limiter.error) {
+    console.error("[demo-request] Durable rate limiter unavailable.");
+    return noStoreJson(
+      { error: "We couldn't accept your request right now. Please try again." },
+      503,
+    );
+  }
+  if (!limiter.allowed) {
     return noStoreJson(
       { error: "Too many requests. Please wait a little before trying again." },
       429,

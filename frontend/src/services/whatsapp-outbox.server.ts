@@ -1,0 +1,235 @@
+import "server-only";
+
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { updateMessage } from "@/services/message.server";
+import {
+  sendWhatsAppImage,
+  sendWhatsAppText,
+} from "@/services/whatsapp-cloud-api.server";
+import type { Message } from "@/types/message";
+import { failureDeliveryPatch } from "@/services/whatsapp-delivery-policy";
+
+type DeliveryRow = {
+  id: string;
+  message_id: string;
+  conversation_id: string;
+  phone_number_id: string | null;
+  recipient_phone: string;
+  status: "pending" | "processing" | "sending" | "sent" | "failed" | "uncertain";
+  attempt_count: number;
+  claim_token: string | null;
+  lease_expires_at: string | null;
+};
+
+export type DeliveryOutcome =
+  "sent" | "deferred" | "retryable_failure" | "failed" | "uncertain";
+
+/** Supplies the trusted inbound destination for pre-endpoint legacy conversations. */
+export async function prepareWhatsAppDelivery(
+  messageId: string,
+  phoneNumberId: string,
+): Promise<void> {
+  const supabase = await createServerSupabaseClient();
+  await supabase
+    .from("whatsapp_outbound_deliveries")
+    .update({
+      phone_number_id: phoneNumberId,
+      status: "pending",
+      retryable: true,
+      next_attempt_at: new Date().toISOString(),
+      last_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("message_id", messageId)
+    .is("phone_number_id", null)
+    .is("whatsapp_endpoint_id", null);
+}
+
+async function claimDelivery(input: {
+  messageId?: string;
+  conversationId?: string;
+}): Promise<DeliveryRow | null> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("claim_whatsapp_outbound_delivery", {
+    p_message_id: input.messageId ?? null,
+    p_conversation_id: input.conversationId ?? null,
+  });
+  if (error) throw new Error(`Outbound delivery claim failed: ${error.message}`);
+  return (Array.isArray(data) ? data[0] : null) as DeliveryRow | null;
+}
+
+async function finishDelivery(
+  delivery: DeliveryRow,
+  patch: Record<string, unknown>,
+  expectedStatus: "processing" | "sending" = "sending",
+): Promise<boolean> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("whatsapp_outbound_deliveries")
+    .update({
+      ...patch,
+      claim_token: null,
+      lease_expires_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", delivery.id)
+    .eq("status", expectedStatus)
+    .eq("claim_token", delivery.claim_token)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(`Outbound delivery completion failed: ${error.message}`);
+  return Boolean(data);
+}
+
+async function beginDeliverySend(delivery: DeliveryRow): Promise<boolean> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("begin_whatsapp_outbound_send", {
+    p_delivery_id: delivery.id,
+    p_claim_token: delivery.claim_token,
+  });
+  if (error) throw new Error(`Outbound send boundary failed: ${error.message}`);
+  return data === true;
+}
+
+async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("messages")
+    .select("*")
+    .eq("id", delivery.message_id)
+    .maybeSingle();
+  if (error || !data || !delivery.phone_number_id) {
+    await finishDelivery(
+      delivery,
+      {
+        status: "failed",
+        retryable: false,
+        last_error: error?.message ?? "Outbound message or destination is unavailable.",
+      },
+      "processing",
+    );
+    return "failed";
+  }
+
+  const message = data as Message;
+  const phoneNumberId = delivery.phone_number_id;
+  const imageUrl =
+    typeof message.metadata?.media_url === "string" ? message.metadata.media_url : null;
+  const send =
+    message.message_type === "image" && imageUrl
+      ? () =>
+          sendWhatsAppImage({
+            phoneNumberId,
+            to: delivery.recipient_phone,
+            imageUrl,
+            caption: message.content,
+          })
+      : message.message_type === "text"
+        ? () =>
+            sendWhatsAppText({
+              phoneNumberId,
+              to: delivery.recipient_phone,
+              body: message.content,
+            })
+        : null;
+
+  if (!send) {
+    await finishDelivery(
+      delivery,
+      {
+        status: "failed",
+        retryable: false,
+        last_error: `Unsupported outbound message type: ${message.message_type}`,
+      },
+      "processing",
+    );
+    return "failed";
+  }
+
+  // This durable transition is the external-side-effect boundary. Expired
+  // `processing` work is safe to reclaim; expired `sending` work is quarantined
+  // as uncertain because Meta may already have accepted it.
+  if (!(await beginDeliverySend(delivery))) return "deferred";
+  const result = await send();
+
+  if (!result.data) {
+    const failure = failureDeliveryPatch(result, delivery.attempt_count);
+    const { outcome, ...patch } = failure;
+    await finishDelivery(delivery, patch);
+    return outcome;
+  }
+
+  const metaMessageId = result.data.whatsappMessageId;
+  const deliveredAt = new Date().toISOString();
+  const completed = await finishDelivery(delivery, {
+    status: "sent",
+    retryable: false,
+    meta_message_id: metaMessageId,
+    sent_at: deliveredAt,
+    last_error: null,
+  });
+  if (!completed) {
+    // Do not resend an accepted Meta request. A processing row is intentionally
+    // left for operator reconciliation rather than risking duplicate delivery.
+    console.error(
+      "[WhatsApp outbox] Meta accepted a send but state was not finalized",
+      {
+        deliveryId: delivery.id,
+        messageId: delivery.message_id,
+      },
+    );
+    return "uncertain";
+  }
+
+  const saved = await updateMessage(message.id, {
+    whatsapp_message_id: metaMessageId,
+    delivered_at: deliveredAt,
+  });
+  if (saved.error) {
+    console.error(
+      "[WhatsApp outbox] Delivery succeeded but message mirror update failed",
+      {
+        deliveryId: delivery.id,
+        messageId: delivery.message_id,
+      },
+    );
+  }
+  return "sent";
+}
+
+export async function deliverWhatsAppMessage(
+  messageId: string,
+): Promise<DeliveryOutcome> {
+  const claim = await claimDelivery({ messageId });
+  return claim ? deliverClaim(claim) : "deferred";
+}
+
+export async function recoverWhatsAppDeliveries(
+  limit = 25,
+  conversationId?: string,
+): Promise<{ sent: number; failed: number; uncertain: number }> {
+  const counts = { sent: 0, failed: 0, uncertain: 0 };
+  for (let index = 0; index < limit; index += 1) {
+    const claim = await claimDelivery({ conversationId });
+    if (!claim) break;
+    const outcome = await deliverClaim(claim);
+    if (outcome === "sent") counts.sent += 1;
+    else if (outcome === "uncertain") counts.uncertain += 1;
+    else counts.failed += 1;
+  }
+  return counts;
+}
+
+export async function hasRecoverableWhatsAppDeliveries(
+  conversationId: string,
+): Promise<boolean> {
+  const supabase = await createServerSupabaseClient();
+  const { count, error } = await supabase
+    .from("whatsapp_outbound_deliveries")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("retryable", true)
+    .in("status", ["pending", "failed"]);
+  if (error) throw new Error(`Outbound recovery lookup failed: ${error.message}`);
+  return (count ?? 0) > 0;
+}

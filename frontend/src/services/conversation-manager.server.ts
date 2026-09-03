@@ -43,6 +43,8 @@ export type IncomingMessageEvent = {
    * booking, or memory state.
    */
   safeFallbackReplyText?: string | null;
+  /** Persist the inbound message but do not invoke an expensive model call. */
+  suppressAI?: boolean;
 };
 
 /**
@@ -188,7 +190,8 @@ export async function handleIncomingMessage(
     data: {
       conversation,
       latestMessages,
-      shouldCallAI: conversation.ai_enabled && conversation.status === "active",
+      shouldCallAI:
+        !event.suppressAI && conversation.ai_enabled && conversation.status === "active",
       humanTakeover: conversation.status === "human",
       leadStage: conversation.lead_stage,
       status: conversation.status,

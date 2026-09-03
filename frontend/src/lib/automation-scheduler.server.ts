@@ -44,10 +44,15 @@ async function runAllGyms(): Promise<void> {
     const { runWithSystemSupabase } = await import("@/lib/supabase/request-context");
     const { runAllGymAutomations } =
       await import("@/services/automation-runner.server");
+    const { recoverWhatsAppDeliveries } =
+      await import("@/services/whatsapp-outbox.server");
 
-    const totals = await runWithSystemSupabase(() => runAllGymAutomations());
+    const { totals, recovered } = await runWithSystemSupabase(async () => ({
+      recovered: await recoverWhatsAppDeliveries(50),
+      totals: await runAllGymAutomations(),
+    }));
     console.log(
-      `[automation-scheduler] Processed automations for ${totals.gyms} gym(s): sent=${totals.sent} skipped=${totals.skipped} failed=${totals.failed}`,
+      `[automation-scheduler] Processed automations for ${totals.gyms} gym(s): sent=${totals.sent} skipped=${totals.skipped} failed=${totals.failed} recovered=${recovered.sent}`,
     );
 
     lastRunAt = Date.now();
