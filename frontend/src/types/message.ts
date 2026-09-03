@@ -14,28 +14,28 @@ export type MessageType =
 
 /** Full message row returned from Supabase. */
 export type Message = {
-  id:                  string;
-  conversation_id:     string;
-  sender_type:         SenderType;
-  message_type:        MessageType;
+  id: string;
+  conversation_id: string;
+  sender_type: SenderType;
+  message_type: MessageType;
   whatsapp_message_id: string | null;
-  content:             string;
-  metadata:            Record<string, unknown>;
-  delivered_at:        string | null;
-  read_at:             string | null;
-  created_at:          string;
+  content: string;
+  metadata: Record<string, unknown>;
+  delivered_at: string | null;
+  read_at: string | null;
+  created_at: string;
 };
 
 /** Payload for creating a new message. */
 export type CreateMessagePayload = {
-  conversation_id:      string;
-  sender_type:          SenderType;
-  message_type?:        MessageType;
+  conversation_id: string;
+  sender_type: SenderType;
+  message_type?: MessageType;
   whatsapp_message_id?: string | null;
-  content:              string;
-  metadata?:            Record<string, unknown>;
-  delivered_at?:        string | null;
-  read_at?:             string | null;
+  content: string;
+  metadata?: Record<string, unknown>;
+  delivered_at?: string | null;
+  read_at?: string | null;
 };
 
 /** Payload for updating an existing message. All fields are optional. */

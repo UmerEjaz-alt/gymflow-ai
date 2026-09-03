@@ -3,8 +3,14 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { MemberImportDialog } from "@/features/operations/member-import-dialog";
 import type { Membership } from "@/types/membership";
 import type { Message } from "@/types/message";
+import type { MembershipPackage } from "@/types/membership-package";
+import type {
+  MemberImportInput,
+  MemberImportResult,
+} from "@/services/membership.server";
 type Member = Membership & { messages: Message[] };
 const today = new Date().toISOString().slice(0, 10);
 function status(member: Member) {
@@ -14,11 +20,23 @@ function status(member: Member) {
     86_400_000;
   return days <= 7 ? "Expiring Soon" : "Active";
 }
-export function MembersWorkspace({ initialMembers }: { initialMembers: Member[] }) {
+export function MembersWorkspace({
+  initialMembers,
+  packages: importPackages,
+  countryCode,
+  onImport,
+}: {
+  initialMembers: Member[];
+  packages: MembershipPackage[];
+  countryCode: string | null;
+  onImport: (
+    rows: MemberImportInput[],
+  ) => Promise<{ data: MemberImportResult | null; error: string | null }>;
+}) {
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [selected, setSelected] = useState<Member | null>(null);
-  const packages = [
+  const packageNames = [
     ...new Set(
       initialMembers
         .map((member) => member.membership_package?.package_name)
@@ -61,10 +79,15 @@ export function MembersWorkspace({ initialMembers }: { initialMembers: Member[] 
           <option>Active</option>
           <option>Expiring Soon</option>
           <option>Expired</option>
-          {packages.map((item) => (
+          {packageNames.map((item) => (
             <option key={item}>{item}</option>
           ))}
         </Select>
+        <MemberImportDialog
+          packages={importPackages}
+          countryCode={countryCode}
+          onImport={onImport}
+        />
       </div>
       <div className="grid lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="divide-y">

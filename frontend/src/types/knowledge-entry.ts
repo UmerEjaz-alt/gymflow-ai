@@ -10,22 +10,24 @@ export type KnowledgeEntryCategory =
   | "general";
 
 export type KnowledgeEntry = {
-  id:         string;
-  gym_id:     string;
-  question:   string;
-  answer:     string;
-  category:   KnowledgeEntryCategory;
-  active:     boolean;
+  id: string;
+  gym_id: string;
+  question: string;
+  answer: string;
+  category: KnowledgeEntryCategory;
+  active: boolean;
   created_at: string;
   updated_at: string;
 };
 
 export type CreateKnowledgeEntryPayload = {
-  gym_id:    string;
-  question:  string;
-  answer:    string;
+  gym_id: string;
+  question: string;
+  answer: string;
   category?: KnowledgeEntryCategory;
-  active?:   boolean;
+  active?: boolean;
 };
 
-export type UpdateKnowledgeEntryPayload = Partial<Omit<CreateKnowledgeEntryPayload, "gym_id">>;
+export type UpdateKnowledgeEntryPayload = Partial<
+  Omit<CreateKnowledgeEntryPayload, "gym_id">
+>;

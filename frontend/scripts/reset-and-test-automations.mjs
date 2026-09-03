@@ -18,13 +18,16 @@ const env = Object.fromEntries(
     }),
 );
 
-const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+const supabase = createClient(
+  env.NEXT_PUBLIC_SUPABASE_URL,
+  env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: { autoRefreshToken: false, persistSession: false },
+  },
+);
 
-const gymId = (
-  await supabase.from("gyms").select("id").limit(1).maybeSingle()
-).data?.id;
+const gymId = (await supabase.from("gyms").select("id").limit(1).maybeSingle()).data
+  ?.id;
 
 if (!gymId) throw new Error("No gym");
 
@@ -93,7 +96,11 @@ for (const exec of executions ?? []) {
     .eq("id", exec.automation_config_id)
     .maybeSingle();
   const { data: message } = exec.sent_message_id
-    ? await supabase.from("messages").select("content, sender_type, conversation_id").eq("id", exec.sent_message_id).maybeSingle()
+    ? await supabase
+        .from("messages")
+        .select("content, sender_type, conversation_id")
+        .eq("id", exec.sent_message_id)
+        .maybeSingle()
     : { data: null };
   console.log("\n---", config?.automation_type ?? "unknown", "---");
   console.log("trigger:", exec.trigger_key, "status:", exec.status);

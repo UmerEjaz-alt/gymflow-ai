@@ -13,7 +13,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function loadEnv() {
   const env = { ...process.env };
-  for (const line of fs.readFileSync(path.join(__dirname, "..", ".env.local"), "utf8").split("\n")) {
+  for (const line of fs
+    .readFileSync(path.join(__dirname, "..", ".env.local"), "utf8")
+    .split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const i = trimmed.indexOf("=");
@@ -74,17 +76,27 @@ function assessContent(type, text) {
   const lower = (text ?? "").toLowerCase();
   const dumpsPackages =
     (lower.match(/package/g) ?? []).length >= 3 ||
-    lower.includes("here are") && lower.includes("package");
+    (lower.includes("here are") && lower.includes("package"));
   const issues = [];
   if (!text || text.trim().length < 10) issues.push("message too short or empty");
   if (dumpsPackages) issues.push("looks like a generic package dump");
-  if (type === "membership_expiry_reminder" && !/expir|renew|ending|end(s)? soon|upcoming/.test(lower))
+  if (
+    type === "membership_expiry_reminder" &&
+    !/expir|renew|ending|end(s)? soon|upcoming/.test(lower)
+  )
     issues.push("missing pre-expiry tone");
-  if (type === "expired_membership_follow_up" && !/expir|renew|checking in|follow/.test(lower))
+  if (
+    type === "expired_membership_follow_up" &&
+    !/expir|renew|checking in|follow/.test(lower)
+  )
     issues.push("missing post-expiry tone");
-  if (type === "member_check_in" && !/check(ing)? in|how.*going|getting started/.test(lower))
+  if (
+    type === "member_check_in" &&
+    !/check(ing)? in|how.*going|getting started/.test(lower)
+  )
     issues.push("missing check-in tone");
-  if (type === "lead_follow_up" && dumpsPackages) issues.push("lead follow-up dumped packages");
+  if (type === "lead_follow_up" && dumpsPackages)
+    issues.push("lead follow-up dumped packages");
   return issues;
 }
 
@@ -98,16 +110,21 @@ async function main() {
     .from("automation_configs")
     .select("*")
     .eq("gym_id", gymId);
-  console.log("Automation configs:", configs?.map((c) => ({
-    type: c.automation_type,
-    enabled: c.enabled,
-    auto_send: c.auto_send,
-    delay_days: c.delay_days,
-  })));
+  console.log(
+    "Automation configs:",
+    configs?.map((c) => ({
+      type: c.automation_type,
+      enabled: c.enabled,
+      auto_send: c.auto_send,
+      delay_days: c.delay_days,
+    })),
+  );
 
   const { data: memberships } = await supabase
     .from("memberships")
-    .select("id, conversation_id, start_date, expiry_date, package:membership_packages(package_name)")
+    .select(
+      "id, conversation_id, start_date, expiry_date, package:membership_packages(package_name)",
+    )
     .eq("gym_id", gymId);
   console.log("\nMemberships:", memberships);
 
@@ -134,12 +151,22 @@ async function main() {
   for (const [type, prefix] of checks) {
     const exec = await latestExecution(gymId, prefix);
     if (!exec) {
-      console.log(`\n${type}: no execution found (may not be due / enabled / already sent)`);
+      console.log(
+        `\n${type}: no execution found (may not be due / enabled / already sent)`,
+      );
       continue;
     }
-    const message = exec.message ?? (exec.sent_message_id
-      ? (await supabase.from("messages").select("*").eq("id", exec.sent_message_id).maybeSingle()).data
-      : null);
+    const message =
+      exec.message ??
+      (exec.sent_message_id
+        ? (
+            await supabase
+              .from("messages")
+              .select("*")
+              .eq("id", exec.sent_message_id)
+              .maybeSingle()
+          ).data
+        : null);
     const issues = assessContent(type, message?.content ?? "");
     console.log(`\n${type}:`);
     console.log(`  status=${exec.status} trigger=${exec.trigger_key}`);
@@ -185,7 +212,9 @@ async function main() {
     .eq("gym_id", gymId);
   console.log("  first run:", result.body);
   console.log("  second run:", second.body);
-  console.log(`  executions before=${before.count} after=${after.count} (should not grow for same triggers)`);
+  console.log(
+    `  executions before=${before.count} after=${after.count} (should not grow for same triggers)`,
+  );
 }
 
 main().catch((e) => {

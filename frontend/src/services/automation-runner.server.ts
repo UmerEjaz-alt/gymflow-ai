@@ -310,7 +310,7 @@ async function runBranchAutomations(
             config,
             conversation.id,
             `lead-follow-up-${windowAnchor}`,
-            "[Lead follow-up] This lead has not replied since the last GymFlow message. Send one concise follow-up that naturally continues the existing conversation. Reference their goals or prior context when available. Do not restart from scratch, pressure them, or dump membership packages.",
+            "[Lead follow-up] This lead has not replied since the last Kroway message. Send one concise follow-up that naturally continues the existing conversation. Reference their goals or prior context when available. Do not restart from scratch, pressure them, or dump membership packages.",
             undefined,
             since,
             now,

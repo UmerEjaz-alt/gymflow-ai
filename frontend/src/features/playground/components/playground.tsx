@@ -12,24 +12,24 @@ import { Textarea } from "@/components/ui/textarea";
 
 export type PlaygroundRunResult = {
   error?: string;
-  conversationStatus?:  string;
-  leadStage?:           string;
-  understandingStage?:  string;
+  conversationStatus?: string;
+  leadStage?: string;
+  understandingStage?: string;
   understandingConfidence?: number;
-  fallbackUsed?:        boolean;
+  fallbackUsed?: boolean;
   // Orchestrator
-  action?:              string;
+  action?: string;
   // Knowledge
-  knowledgeSummary?:    string;
+  knowledgeSummary?: string;
   // AI response
-  aiResponseText?:      string;
-  aiModel?:             string;
-  aiFinishReason?:      string;
+  aiResponseText?: string;
+  aiModel?: string;
+  aiFinishReason?: string;
   // Validation
-  validatorApproved?:   boolean;
-  validatorReason?:     string | null;
+  validatorApproved?: boolean;
+  validatorReason?: string | null;
   // Persistence
-  saveResult?:          { saved: boolean; error: string | null };
+  saveResult?: { saved: boolean; error: string | null };
 };
 
 type PlaygroundProps = {
@@ -42,9 +42,9 @@ type PlaygroundProps = {
 
 /** Internal AI Playground. Runs the full pipeline server-side via a Server Action. */
 export function Playground({ onRun }: PlaygroundProps) {
-  const [message, setMessage]     = useState("");
+  const [message, setMessage] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [result, setResult]       = useState<PlaygroundRunResult | null>(null);
+  const [result, setResult] = useState<PlaygroundRunResult | null>(null);
   const [reuseConversation, setReuseConversation] = useState(true);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -79,9 +79,9 @@ export function Playground({ onRun }: PlaygroundProps) {
           value={message}
         />
         <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-            <input 
-              type="checkbox" 
+          <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
               className="rounded border-gray-300"
               checked={reuseConversation}
               onChange={(e) => setReuseConversation(e.target.checked)}
@@ -110,7 +110,10 @@ export function Playground({ onRun }: PlaygroundProps) {
           {/* Understanding */}
           {result.understandingStage !== undefined ? (
             <ResultCard title="Understanding">
-              <Row label="Conversation stage" value={result.understandingStage ?? "—"} />
+              <Row
+                label="Conversation stage"
+                value={result.understandingStage ?? "—"}
+              />
               <Row
                 label="Confidence"
                 value={`${((result.understandingConfidence ?? 0) * 100).toFixed(0)}%`}
@@ -122,7 +125,7 @@ export function Playground({ onRun }: PlaygroundProps) {
           {/* Conversation */}
           {result.conversationStatus !== undefined ? (
             <ResultCard title="Conversation Status">
-              <Row label="Status"     value={result.conversationStatus ?? "—"} />
+              <Row label="Status" value={result.conversationStatus ?? "—"} />
               <Row label="Lead stage" value={result.leadStage ?? "—"} />
             </ResultCard>
           ) : null}
@@ -137,7 +140,7 @@ export function Playground({ onRun }: PlaygroundProps) {
           {/* Knowledge */}
           {result.knowledgeSummary !== undefined ? (
             <ResultCard title="Knowledge Loaded">
-              <pre className="text-muted-foreground whitespace-pre-wrap text-xs leading-relaxed">
+              <pre className="text-muted-foreground text-xs leading-relaxed whitespace-pre-wrap">
                 {result.knowledgeSummary || "No knowledge loaded."}
               </pre>
             </ResultCard>
@@ -146,7 +149,7 @@ export function Playground({ onRun }: PlaygroundProps) {
           {/* Prompt summary */}
           {result.aiResponseText !== undefined ? (
             <ResultCard title="AI Response">
-              <Row label="Model"         value={result.aiModel ?? "—"} />
+              <Row label="Model" value={result.aiModel ?? "—"} />
               <Row label="Finish reason" value={result.aiFinishReason ?? "—"} />
               <div className="mt-3">
                 <p className="text-muted-foreground mb-1 text-xs font-medium">Text</p>
@@ -174,7 +177,7 @@ export function Playground({ onRun }: PlaygroundProps) {
           {/* Save */}
           {result.saveResult !== undefined ? (
             <ResultCard title="Save Result">
-              <Row label="Saved"  value={result.saveResult.saved ? "✓ Yes" : "✗ No"} />
+              <Row label="Saved" value={result.saveResult.saved ? "✓ Yes" : "✗ No"} />
               {result.saveResult.error ? (
                 <Row label="Error" value={result.saveResult.error} />
               ) : null}
@@ -193,7 +196,7 @@ export function Playground({ onRun }: PlaygroundProps) {
 function ResultCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="border-border bg-card rounded-xl border p-4">
-      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-current opacity-50">
+      <p className="mb-3 text-xs font-semibold tracking-wider text-current uppercase opacity-50">
         {title}
       </p>
       <div className="space-y-1.5">{children}</div>
@@ -203,7 +206,7 @@ function ResultCard({ title, children }: { title: string; children: React.ReactN
 
 function ErrorCard({ title, body }: { title: string; body: string }) {
   return (
-    <div className="border-border bg-red-500/10 rounded-xl border px-4 py-3">
+    <div className="border-border rounded-xl border bg-red-500/10 px-4 py-3">
       <p className="mb-1 text-xs font-semibold text-red-700">{title}</p>
       <p className="text-sm text-red-700">{body}</p>
     </div>

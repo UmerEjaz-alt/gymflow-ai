@@ -18,9 +18,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function loadEnv() {
   const raw = fs.readFileSync(path.join(__dirname, "..", ".env.local"), "utf8");
   return Object.fromEntries(
-    raw.split("\n")
+    raw
+      .split("\n")
       .filter((l) => l.trim() && !l.startsWith("#"))
-      .map((l) => { const i = l.indexOf("="); return [l.slice(0, i).trim(), l.slice(i + 1).trim()]; }),
+      .map((l) => {
+        const i = l.indexOf("=");
+        return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+      }),
   );
 }
 
@@ -29,8 +33,8 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
   auth: { autoRefreshToken: false, persistSession: false },
 });
 const APP_URL = env.APP_URL ?? "http://localhost:3000";
-const SECRET  = env.AUTOMATION_RUNNER_SECRET;
-const today   = new Date().toISOString().slice(0, 10);
+const SECRET = env.AUTOMATION_RUNNER_SECRET;
+const today = new Date().toISOString().slice(0, 10);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,10 +49,10 @@ async function disableAll(gymId) {
 
 async function enableOnly(gymId, type, overrides = {}) {
   const defaults = {
-    membership_expiry_reminder:  { delay_days: 1  },
+    membership_expiry_reminder: { delay_days: 1 },
     expired_membership_follow_up: { delay_days: 0 },
-    member_check_in:             { delay_days: 30 },
-    lead_follow_up:              { delay_days: 0  },
+    member_check_in: { delay_days: 30 },
+    lead_follow_up: { delay_days: 0 },
   };
   await sb.from("automation_configs").upsert(
     {
@@ -67,7 +71,10 @@ async function enableOnly(gymId, type, overrides = {}) {
 }
 
 async function clearExecutions(gymId) {
-  const { count } = await sb.from("automation_executions").delete({ count: "exact" }).eq("gym_id", gymId);
+  const { count } = await sb
+    .from("automation_executions")
+    .delete({ count: "exact" })
+    .eq("gym_id", gymId);
   return count ?? 0;
 }
 
@@ -103,7 +110,11 @@ async function latestSentMessage(gymId, triggerPrefix) {
   for (const exec of execs ?? []) {
     let content = null;
     if (exec.sent_message_id) {
-      const { data: msg } = await sb.from("messages").select("content, sender_type").eq("id", exec.sent_message_id).maybeSingle();
+      const { data: msg } = await sb
+        .from("messages")
+        .select("content, sender_type")
+        .eq("id", exec.sent_message_id)
+        .maybeSingle();
       content = msg?.content ?? null;
     }
     results.push({ ...exec, content });
@@ -115,13 +126,26 @@ function assess(type, text) {
   if (!text || text.trim().length < 10) return "FAIL: message empty or too short";
   const lower = text.toLowerCase();
   const pkgCount = (lower.match(/\bpackage\b/g) ?? []).length;
-  const dumpsPackages = pkgCount >= 3 || (lower.includes("here are") && lower.includes("package"));
-  if (dumpsPackages) return `FAIL: generic package dump (package mentioned ${pkgCount}x)`;
-  if (type === "membership_expiry_reminder" && !/expir|renew|ending|end(s)? soon|upcoming|reminder/.test(lower))
+  const dumpsPackages =
+    pkgCount >= 3 || (lower.includes("here are") && lower.includes("package"));
+  if (dumpsPackages)
+    return `FAIL: generic package dump (package mentioned ${pkgCount}x)`;
+  if (
+    type === "membership_expiry_reminder" &&
+    !/expir|renew|ending|end(s)? soon|upcoming|reminder/.test(lower)
+  )
     return "WARN: missing expiry/renewal language";
-  if (type === "expired_membership_follow_up" && !/expir|renew|check.?in|follow/.test(lower))
+  if (
+    type === "expired_membership_follow_up" &&
+    !/expir|renew|check.?in|follow/.test(lower)
+  )
     return "WARN: missing expiry/renewal language";
-  if (type === "member_check_in" && !/check.?in|how.*going|how.*finding|getting on|settling|how.*been|hope.*enjoy/.test(lower))
+  if (
+    type === "member_check_in" &&
+    !/check.?in|how.*going|how.*finding|getting on|settling|how.*been|hope.*enjoy/.test(
+      lower,
+    )
+  )
     return "WARN: missing check-in tone";
   if (type === "lead_follow_up" && dumpsPackages)
     return "FAIL: lead follow-up dumped packages";
@@ -131,29 +155,50 @@ function assess(type, text) {
 // ─── Test runner ──────────────────────────────────────────────────────────────
 
 const gymId = await getGymId();
-if (!gymId) { console.error("No gym found"); process.exit(1); }
+if (!gymId) {
+  console.error("No gym found");
+  process.exit(1);
+}
 console.log(`Gym: ${gymId}   Today: ${today}\n`);
 
 // Show current data
-const { data: memberships } = await sb.from("memberships")
-  .select("id, conversation_id, start_date, expiry_date, package:membership_packages(package_name)")
+const { data: memberships } = await sb
+  .from("memberships")
+  .select(
+    "id, conversation_id, start_date, expiry_date, package:membership_packages(package_name)",
+  )
   .eq("gym_id", gymId);
 console.log("Memberships:");
-memberships?.forEach((m) => console.log(`  ${m.id.slice(0,8)} ${m.start_date}→${m.expiry_date}  ${m.package?.package_name}  conv:${m.conversation_id.slice(0,8)}`));
+memberships?.forEach((m) =>
+  console.log(
+    `  ${m.id.slice(0, 8)} ${m.start_date}→${m.expiry_date}  ${m.package?.package_name}  conv:${m.conversation_id.slice(0, 8)}`,
+  ),
+);
 
-const { data: leads } = await sb.from("conversations")
+const { data: leads } = await sb
+  .from("conversations")
   .select("id, customer_name, lead_stage")
   .eq("gym_id", gymId)
   .not("lead_stage", "in", '("member","lost")')
   .order("last_message_at", { ascending: false })
   .limit(3); // only first 3 for display
-console.log(`\nLead conversations (top 3 of many): ${leads?.map((c) => `${c.id.slice(0,8)} ${c.customer_name}`).join(" | ")}\n`);
+console.log(
+  `\nLead conversations (top 3 of many): ${leads?.map((c) => `${c.id.slice(0, 8)} ${c.customer_name}`).join(" | ")}\n`,
+);
 
 const TYPES = [
-  { type: "membership_expiry_reminder",  prefix: "expiry-",       label: "1. MEMBERSHIP EXPIRY REMINDER" },
-  { type: "expired_membership_follow_up", prefix: "expired-",     label: "2. EXPIRED MEMBERSHIP FOLLOW-UP" },
-  { type: "member_check_in",             prefix: "check-in-",     label: "3. MEMBER CHECK-IN" },
-  { type: "lead_follow_up",             prefix: "lead-follow-up-", label: "4. LEAD FOLLOW-UP" },
+  {
+    type: "membership_expiry_reminder",
+    prefix: "expiry-",
+    label: "1. MEMBERSHIP EXPIRY REMINDER",
+  },
+  {
+    type: "expired_membership_follow_up",
+    prefix: "expired-",
+    label: "2. EXPIRED MEMBERSHIP FOLLOW-UP",
+  },
+  { type: "member_check_in", prefix: "check-in-", label: "3. MEMBER CHECK-IN" },
+  { type: "lead_follow_up", prefix: "lead-follow-up-", label: "4. LEAD FOLLOW-UP" },
 ];
 
 const results = [];
@@ -169,14 +214,18 @@ for (const { type, prefix, label } of TYPES) {
   console.log(`Cleared ${cleared} prior executions. Only '${type}' enabled.`);
 
   const { status, body } = await run(gymId);
-  console.log(`Runner → HTTP ${status}  sent=${body.sent} skipped=${body.skipped} failed=${body.failed}`);
+  console.log(
+    `Runner → HTTP ${status}  sent=${body.sent} skipped=${body.skipped} failed=${body.failed}`,
+  );
 
   // If some failed (rate limit), wait and retry once
   if (body.failed > 0) {
     console.log("  Some failed — waiting 20s for rate-limit reset then retrying...");
     await sleep(20_000);
     const retry = await run(gymId);
-    console.log(`  Retry  → sent=${retry.body.sent} skipped=${retry.body.skipped} failed=${retry.body.failed}`);
+    console.log(
+      `  Retry  → sent=${retry.body.sent} skipped=${retry.body.skipped} failed=${retry.body.failed}`,
+    );
   }
 
   const execResults = await latestSentMessage(gymId, prefix);
@@ -192,7 +241,12 @@ for (const { type, prefix, label } of TYPES) {
   console.log(`  status      : ${sentExec.status}`);
   if (sentExec.status !== "sent") {
     console.log(`  error       : ${sentExec.error_message}`);
-    results.push({ label, type, pass: false, reason: sentExec.error_message ?? "not sent" });
+    results.push({
+      label,
+      type,
+      pass: false,
+      reason: sentExec.error_message ?? "not sent",
+    });
     continue;
   }
   console.log(`  conversation: ${sentExec.conversation_id}`);
@@ -202,7 +256,9 @@ for (const { type, prefix, label } of TYPES) {
 
   // Duplicate check
   const dup = await run2(gymId);
-  console.log(`  dup run     : sent=${dup.sent} skipped=${dup.skipped} failed=${dup.failed}  (sent must be 0)`);
+  console.log(
+    `  dup run     : sent=${dup.sent} skipped=${dup.skipped} failed=${dup.failed}  (sent must be 0)`,
+  );
   const dupOk = dup.sent === 0;
 
   const pass = assessment.startsWith("OK") && dupOk;
@@ -227,7 +283,13 @@ for (const r of results) {
     console.log(`     reason: ${r.reason ?? r.assessment}`);
     allPassed = false;
   } else {
-    console.log(`     assessment: ${r.assessment}   dup prevention: ${r.dupOk ? "OK" : "FAIL"}`);
+    console.log(
+      `     assessment: ${r.assessment}   dup prevention: ${r.dupOk ? "OK" : "FAIL"}`,
+    );
   }
 }
-console.log(allPassed ? "\nAll four automation types PASSED." : "\nSome types FAILED — see above.");
+console.log(
+  allPassed
+    ? "\nAll four automation types PASSED."
+    : "\nSome types FAILED — see above.",
+);

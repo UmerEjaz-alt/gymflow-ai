@@ -17,7 +17,7 @@ export default async function LoginPage() {
   return (
     <main className="bg-muted/30 flex min-h-screen items-center justify-center px-6 py-12">
       <AuthCard
-        description="Sign in to continue to your gym operations workspace."
+        description="Sign in to continue to your Kroway operations workspace."
         title="Welcome back"
       >
         <LoginForm />

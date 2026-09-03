@@ -102,9 +102,12 @@ export default async function WhatsAppEndpointsPage() {
           <MessageSquare aria-hidden className="size-4" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">WhatsApp Configuration</h1>
+          <h1 className="text-xl font-semibold tracking-tight">
+            WhatsApp Configuration
+          </h1>
           <p className="text-muted-foreground text-sm">
-            Configure how your gym connects to WhatsApp. Use a single number across all branches or separate numbers for each location.
+            Configure how your gym connects to WhatsApp. Use a single number across all
+            branches or separate numbers for each location.
           </p>
         </div>
       </div>

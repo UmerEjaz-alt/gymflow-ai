@@ -62,8 +62,12 @@ export function WhatsAppEndpointsManager({
 
   // Determine current active mode
   const initialMode: "shared" | "branch" = useMemo(() => {
-    const hasActiveShared = endpoints.some((ep) => ep.branch_id === null && ep.is_active);
-    const hasActiveBranch = endpoints.some((ep) => ep.branch_id !== null && ep.is_active);
+    const hasActiveShared = endpoints.some(
+      (ep) => ep.branch_id === null && ep.is_active,
+    );
+    const hasActiveBranch = endpoints.some(
+      (ep) => ep.branch_id !== null && ep.is_active,
+    );
     if (hasActiveShared) return "shared";
     if (hasActiveBranch) return "branch";
     return "shared";
@@ -282,11 +286,12 @@ export function WhatsAppEndpointsManager({
     <div className="space-y-8">
       {/* ── Main Setup Question ── */}
       <div>
-        <h2 className="text-base font-semibold text-foreground">
+        <h2 className="text-foreground text-base font-semibold">
           How does your gym use WhatsApp?
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          Select the option that matches your gym’s phone setup. You can switch this at any time without affecting past chats.
+          Select the option that matches your gym’s phone setup. You can switch this at
+          any time without affecting past chats.
         </p>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -295,7 +300,7 @@ export function WhatsAppEndpointsManager({
             onClick={() => setMode("shared")}
             className={`flex cursor-pointer flex-col justify-between rounded-xl border p-4 transition-all ${
               mode === "shared"
-                ? "border-primary bg-primary/5 shadow-xs ring-1 ring-primary"
+                ? "border-primary bg-primary/5 ring-primary shadow-xs ring-1"
                 : "border-border hover:bg-muted/40"
             }`}
           >
@@ -315,7 +320,9 @@ export function WhatsAppEndpointsManager({
                 />
               </div>
               <p className="text-muted-foreground text-xs leading-relaxed">
-                Your gym uses <strong>one central WhatsApp number</strong>. Customers message your main brand, and GymFlow’s AI reception establishes which branch they are interested in.
+                Your gym uses <strong>one central WhatsApp number</strong>. Customers
+                message your main brand, and Kroway’s AI reception establishes which
+                branch they are interested in.
               </p>
             </div>
             <div className="mt-3 flex items-center gap-1.5 text-[11px] font-medium text-violet-700 dark:text-violet-400">
@@ -329,7 +336,7 @@ export function WhatsAppEndpointsManager({
             onClick={() => setMode("branch")}
             className={`flex cursor-pointer flex-col justify-between rounded-xl border p-4 transition-all ${
               mode === "branch"
-                ? "border-primary bg-primary/5 shadow-xs ring-1 ring-primary"
+                ? "border-primary bg-primary/5 ring-primary shadow-xs ring-1"
                 : "border-border hover:bg-muted/40"
             }`}
           >
@@ -349,7 +356,9 @@ export function WhatsAppEndpointsManager({
                 />
               </div>
               <p className="text-muted-foreground text-xs leading-relaxed">
-                Each branch has its <strong>own dedicated WhatsApp number</strong>. Inbound messages automatically connect directly to that branch’s packages and schedule.
+                Each branch has its <strong>own dedicated WhatsApp number</strong>.
+                Inbound messages automatically connect directly to that branch’s
+                packages and schedule.
               </p>
             </div>
             <div className="mt-3 flex items-center gap-1.5 text-[11px] font-medium text-blue-700 dark:text-blue-400">
@@ -362,13 +371,14 @@ export function WhatsAppEndpointsManager({
 
       {/* ── Configuration Form for Option A ── */}
       {mode === "shared" && (
-        <div className="border-border bg-card rounded-xl border p-5 sm:p-6 space-y-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-border">
+        <div className="border-border bg-card space-y-4 rounded-xl border p-5 sm:p-6">
+          <div className="border-border flex items-center gap-2 border-b pb-2">
             <Globe className="size-4 text-violet-500" />
             <div>
               <h3 className="text-sm font-semibold">Central WhatsApp Number</h3>
               <p className="text-muted-foreground text-xs">
-                Inbound messages arrive at the gym level. AI will ask which branch before quoting branch-specific fees.
+                Inbound messages arrive at the gym level. AI will ask which branch
+                before quoting branch-specific fees.
               </p>
             </div>
           </div>
@@ -435,30 +445,34 @@ export function WhatsAppEndpointsManager({
 
       {/* ── Configuration Form for Option B ── */}
       {mode === "branch" && (
-        <div className="border-border bg-card rounded-xl border p-5 sm:p-6 space-y-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-border">
+        <div className="border-border bg-card space-y-4 rounded-xl border p-5 sm:p-6">
+          <div className="border-border flex items-center gap-2 border-b pb-2">
             <GitBranch className="size-4 text-blue-500" />
             <div>
               <h3 className="text-sm font-semibold">Branch WhatsApp Numbers</h3>
               <p className="text-muted-foreground text-xs">
-                Configure a separate WhatsApp number for each branch. Inbound messages automatically resolve that branch.
+                Configure a separate WhatsApp number for each branch. Inbound messages
+                automatically resolve that branch.
               </p>
             </div>
           </div>
 
           <form onSubmit={handleSaveBranches} className="space-y-5">
-            <div className="divide-y divide-border">
+            <div className="divide-border divide-y">
               {branches.map((branch) => {
                 const config = branchConfigs[branch.id] ?? { phone: "", phoneId: "" };
                 return (
-                  <div key={branch.id} className="py-4 first:pt-0 last:pb-0 space-y-3">
+                  <div key={branch.id} className="space-y-3 py-4 first:pt-0 last:pb-0">
                     <div className="flex items-center gap-2">
-                      <Building2 className="size-4 text-muted-foreground" />
-                      <span className="font-semibold text-sm">
+                      <Building2 className="text-muted-foreground size-4" />
+                      <span className="text-sm font-semibold">
                         {branch.branch_name}
                       </span>
                       {branch.city && (
-                        <Badge variant="default" className="text-[11px] font-normal bg-muted text-muted-foreground">
+                        <Badge
+                          variant="default"
+                          className="bg-muted text-muted-foreground text-[11px] font-normal"
+                        >
                           {branch.city}
                         </Badge>
                       )}
@@ -512,7 +526,7 @@ export function WhatsAppEndpointsManager({
               })}
             </div>
 
-            <div className="flex items-center justify-between pt-3 border-t border-border">
+            <div className="border-border flex items-center justify-between border-t pt-3">
               <span className="text-muted-foreground text-xs">
                 Underlying routing: <code>branch_id = branch.id</code>
               </span>
@@ -530,22 +544,25 @@ export function WhatsAppEndpointsManager({
       )}
 
       {/* ── Active Numbers Summary Card ── */}
-      <div className="border-border bg-card rounded-xl border p-5 sm:p-6 space-y-4">
+      <div className="border-border bg-card space-y-4 rounded-xl border p-5 sm:p-6">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold">Active WhatsApp Numbers</h3>
             <p className="text-muted-foreground text-xs">
-              These phone numbers are currently live and handled by the GymFlow AI receptionist.
+              These phone numbers are currently live and handled by the Kroway AI
+              receptionist.
             </p>
           </div>
           <Badge variant={activeEndpoints.length > 0 ? "success" : "muted"}>
-            {activeEndpoints.length} active {activeEndpoints.length === 1 ? "number" : "numbers"}
+            {activeEndpoints.length} active{" "}
+            {activeEndpoints.length === 1 ? "number" : "numbers"}
           </Badge>
         </div>
 
         {activeEndpoints.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
-            No active WhatsApp numbers configured. Select an option above and save your number.
+          <div className="border-border text-muted-foreground rounded-lg border border-dashed p-6 text-center text-xs">
+            No active WhatsApp numbers configured. Select an option above and save your
+            number.
           </div>
         ) : (
           <div className="grid gap-3">
@@ -557,24 +574,22 @@ export function WhatsAppEndpointsManager({
               return (
                 <div
                   key={ep.id}
-                  className="flex flex-col justify-between gap-2 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center text-xs"
+                  className="border-border bg-muted/20 flex flex-col justify-between gap-2 rounded-lg border p-3 text-xs sm:flex-row sm:items-center"
                 >
                   <div className="flex items-center gap-3">
                     <Phone className="size-4 text-emerald-600" />
                     <div>
-                      <span className="font-semibold text-foreground">
+                      <span className="text-foreground font-semibold">
                         {ep.phone_number}
                       </span>
                       {ep.label && (
-                        <span className="text-muted-foreground ml-2">
-                          ({ep.label})
-                        </span>
+                        <span className="text-muted-foreground ml-2">({ep.label})</span>
                       )}
                     </div>
                     {ep.branch_id ? (
                       <Badge
                         variant="default"
-                        className="bg-blue-500/10 text-blue-700 dark:text-blue-400 font-normal gap-1"
+                        className="gap-1 bg-blue-500/10 font-normal text-blue-700 dark:text-blue-400"
                       >
                         <GitBranch className="size-3" />
                         Dedicated: {matchedBranch?.branch_name ?? "Branch"}
@@ -582,7 +597,7 @@ export function WhatsAppEndpointsManager({
                     ) : (
                       <Badge
                         variant="default"
-                        className="bg-violet-500/10 text-violet-700 dark:text-violet-400 font-normal gap-1"
+                        className="gap-1 bg-violet-500/10 font-normal text-violet-700 dark:text-violet-400"
                       >
                         <Globe className="size-3" />
                         Shared across gym
@@ -594,9 +609,9 @@ export function WhatsAppEndpointsManager({
                     <Button
                       variant="ghost"
                       onClick={() => setDeleteTarget(ep)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-500/10 h-7 px-2 text-xs"
+                      className="h-7 px-2 text-xs text-red-600 hover:bg-red-500/10 hover:text-red-700"
                     >
-                      <Trash2 className="size-3.5 mr-1" />
+                      <Trash2 className="mr-1 size-3.5" />
                       Remove
                     </Button>
                   </div>
@@ -613,7 +628,7 @@ export function WhatsAppEndpointsManager({
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="Remove WhatsApp Number?"
-        description={`Are you sure you want to remove "${deleteTarget?.label || deleteTarget?.phone_number}"? Inbound messages to this number will no longer be handled by GymFlow.`}
+        description={`Are you sure you want to remove "${deleteTarget?.label || deleteTarget?.phone_number}"? Inbound messages to this number will no longer be handled by Kroway.`}
         confirmLabel="Remove Number"
         isConfirming={isDeleting}
       />

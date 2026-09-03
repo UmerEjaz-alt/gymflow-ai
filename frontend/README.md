@@ -1,6 +1,6 @@
-# GymFlow AI frontend
+# Kroway frontend
 
-The Next.js frontend foundation for GymFlow AI. It provides shared UI primitives, theme support, formatting, and a feature-oriented code structure without product functionality.
+The Next.js frontend foundation for Kroway. It provides shared UI primitives, theme support, formatting, and a feature-oriented code structure without product functionality.
 
 ## Commands
 

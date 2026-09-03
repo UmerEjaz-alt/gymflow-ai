@@ -42,7 +42,8 @@ async function runAllGyms(): Promise<void> {
   running = true;
   try {
     const { runWithSystemSupabase } = await import("@/lib/supabase/request-context");
-    const { runAllGymAutomations } = await import("@/services/automation-runner.server");
+    const { runAllGymAutomations } =
+      await import("@/services/automation-runner.server");
 
     const totals = await runWithSystemSupabase(() => runAllGymAutomations());
     console.log(

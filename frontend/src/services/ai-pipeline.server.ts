@@ -39,10 +39,10 @@ import { validateAIResponse } from "@/services/response-validator.server";
  *                       Null when the knowledge path was not taken.
  */
 export type PipelineResult = {
-  action:            OrchestratorAction;
+  action: OrchestratorAction;
   validatedResponse: ValidatedResponse | null;
-  aiResponse:        AIResponse | null;
-  knowledge:         KnowledgeContext | null;
+  aiResponse: AIResponse | null;
+  knowledge: KnowledgeContext | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -79,8 +79,8 @@ export async function generateValidatedReply(
     return {
       action,
       validatedResponse: null,
-      aiResponse:        null,
-      knowledge:         null,
+      aiResponse: null,
+      knowledge: null,
     };
   }
 
@@ -91,7 +91,7 @@ export async function generateValidatedReply(
 
   // ── Step 3 & 4: Generate AI response ─────────────────────────────────────
 
-  const provider   = createAIProvider();
+  const provider = createAIProvider();
   const aiResponse = await provider.generateResponse(prompt);
 
   // ── Step 5: Validate ──────────────────────────────────────────────────────

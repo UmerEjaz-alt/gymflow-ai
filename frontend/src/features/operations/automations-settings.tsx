@@ -38,7 +38,7 @@ const definitions: Array<{
     type: "lead_follow_up",
     title: "Lead follow-up",
     description:
-      "Follow up only when a lead has not replied to the last GymFlow message.",
+      "Follow up only when a lead has not replied to the last Kroway message.",
     label: "Wait before follow-up (days)",
     defaultDays: 2,
   },
@@ -169,7 +169,7 @@ export function AutomationsSettings({
             </div>
             <label className="mt-4 flex items-center gap-2 text-sm">
               <input defaultChecked={config.auto_send} name="auto" type="checkbox" />
-              Let GymFlow send automatically
+              Let Kroway send automatically
             </label>
             <div className="mt-4 flex justify-end">
               <Button disabled={saving === definition.type} type="submit">

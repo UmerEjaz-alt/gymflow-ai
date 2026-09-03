@@ -16,14 +16,16 @@ import {
   deleteMediaAsset,
 } from "@/services/media-asset.server";
 import { resolveActiveBranch } from "@/lib/active-branch.server";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { UpdateBranchPayload } from "@/types/branch";
 import type { Facility, CreateFacilityPayload } from "@/types/facility";
 import type { MediaAsset, CreateMediaAssetPayload } from "@/types/media-asset";
 
 /** Server Action: saves business-level gym fields (name, email) to the gyms table. */
-export async function saveGymProfileAction(
-  payload: { gym_name: string; email?: string | null },
-): Promise<{ error: string | null }> {
+export async function saveGymProfileAction(payload: {
+  gym_name: string;
+  email?: string | null;
+}): Promise<{ error: string | null }> {
   const { data: existing } = await getGym();
   if (existing) {
     const { error } = await updateGym({
@@ -45,6 +47,47 @@ export async function saveGymProfileAction(
   if (error) return { error };
   revalidatePath("/", "layout");
   return { error: null };
+}
+
+/** Saves a gym-wide logo URL after verifying the uploaded object belongs to the active gym and branch. */
+export async function saveGymLogoAction(
+  storagePath: string | null,
+): Promise<{ data: string | null; error: string | null }> {
+  const resolved = await resolveActiveBranch();
+  if (resolved.error || !resolved.gym) {
+    return { data: null, error: resolved.error ?? "Gym not found." };
+  }
+
+  if (storagePath === null) {
+    const { error } = await updateGym({ logo_url: null }, resolved.gym.id);
+    if (!error) {
+      revalidatePath("/settings");
+      revalidatePath("/", "layout");
+    }
+    return { data: null, error };
+  }
+
+  if (!resolved.branch) {
+    return { data: null, error: "Select a branch before uploading a logo." };
+  }
+
+  const prefix = `${resolved.gym.id}/${resolved.branch.id}/logos/`;
+  const filename = storagePath.startsWith(prefix)
+    ? storagePath.slice(prefix.length)
+    : "";
+  if (!/^[0-9a-f-]{36}\.(?:jpe?g|png|webp)$/i.test(filename)) {
+    return { data: null, error: "Invalid logo upload path." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const logoUrl = supabase.storage.from("gymflow-media").getPublicUrl(storagePath)
+    .data.publicUrl;
+  const { error } = await updateGym({ logo_url: logoUrl }, resolved.gym.id);
+  if (!error) {
+    revalidatePath("/settings");
+    revalidatePath("/", "layout");
+  }
+  return { data: error ? null : logoUrl, error };
 }
 
 /** Server Action: saves branch-specific fields (address, hours, policies, etc.) to the branches table. */
@@ -81,11 +124,20 @@ export async function saveFacilityAction(
     gym_id: resolved.gym.id,
     branch_id: resolved.branch.id,
   };
-  if (facilityId) return updateFacility(facilityId, scopedPayload);
+  if (facilityId) {
+    const existing = await getFacilities(resolved.gym.id, resolved.branch.id);
+    if (existing.error) return { data: null, error: existing.error };
+    if (!existing.data?.some((facility) => facility.id === facilityId)) {
+      return { data: null, error: "Facility not found." };
+    }
+    return updateFacility(facilityId, scopedPayload);
+  }
   return createFacility(scopedPayload);
 }
 
-export async function deleteFacilityAction(facilityId: string): Promise<{ error: string | null }> {
+export async function deleteFacilityAction(
+  facilityId: string,
+): Promise<{ error: string | null }> {
   const resolved = await resolveActiveBranch();
   if (resolved.error || !resolved.gym || !resolved.branch) {
     return { error: resolved.error ?? "Active branch not resolved." };
@@ -110,11 +162,33 @@ export async function saveMediaAssetAction(
     gym_id: resolved.gym.id,
     branch_id: resolved.branch.id,
   };
+  try {
+    const url = new URL(scopedPayload.media_url);
+    if (url.protocol !== "https:")
+      return { data: null, error: "Image URL must use HTTPS." };
+  } catch {
+    return { data: null, error: "Invalid image URL." };
+  }
   if (assetId) return updateMediaAsset(assetId, scopedPayload);
   return createMediaAsset(scopedPayload);
 }
 
-export async function deleteMediaAssetAction(assetId: string): Promise<{ error: string | null }> {
+export async function archiveMediaAssetAction(
+  assetId: string,
+): Promise<{ error: string | null }> {
+  const resolved = await resolveActiveBranch();
+  if (resolved.error || !resolved.gym || !resolved.branch)
+    return { error: resolved.error ?? "Active branch not resolved." };
+  const existing = await getMediaAssets(resolved.gym.id, resolved.branch.id);
+  if (!existing.data?.some((asset) => asset.id === assetId))
+    return { error: "Media asset not found." };
+  const result = await updateMediaAsset(assetId, { active: false, featured: false });
+  return { error: result.error };
+}
+
+export async function deleteMediaAssetAction(
+  assetId: string,
+): Promise<{ error: string | null }> {
   const resolved = await resolveActiveBranch();
   if (resolved.error || !resolved.gym || !resolved.branch) {
     return { error: resolved.error ?? "Active branch not resolved." };

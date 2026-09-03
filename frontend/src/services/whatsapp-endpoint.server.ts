@@ -95,9 +95,7 @@ export async function resolveWhatsAppEndpoint(
       }
 
       // Check gym-level whatsapp_number (shared gym line)
-      const { data: gyms } = await supabase
-        .from("gyms")
-        .select("id, whatsapp_number");
+      const { data: gyms } = await supabase.from("gyms").select("id, whatsapp_number");
 
       const matchedGym = (gyms ?? []).find(
         (g) => (g.whatsapp_number ?? "").replace(/\D/g, "") === normalized,

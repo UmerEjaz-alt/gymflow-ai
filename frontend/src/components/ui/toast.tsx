@@ -5,7 +5,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useId,
   useState,
   type ReactNode,
 } from "react";
@@ -46,11 +45,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const toast = useCallback((message: string, variant: ToastVariant = "success") => {
-    const id = crypto.randomUUID();
-    setToasts((prev) => [...prev, { id, message, variant }]);
-    setTimeout(() => dismiss(id), 4000);
-  }, [dismiss]);
+  const toast = useCallback(
+    (message: string, variant: ToastVariant = "success") => {
+      const id = crypto.randomUUID();
+      setToasts((prev) => [...prev, { id, message, variant }]);
+      setTimeout(() => dismiss(id), 4000);
+    },
+    [dismiss],
+  );
 
   return (
     <ToastContext.Provider value={{ toast }}>
@@ -59,21 +61,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div
         aria-live="polite"
         aria-label="Notifications"
-        className="fixed bottom-4 right-4 z-50 flex flex-col gap-2"
+        className="fixed right-4 bottom-4 z-50 flex flex-col gap-2"
       >
         {toasts.map((t) => (
           <div
             key={t.id}
             role="status"
             className={cn(
-              "flex w-80 items-start gap-3 rounded-lg border px-4 py-3 shadow-lg text-sm transition-all",
+              "flex w-80 items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg transition-all",
               t.variant === "success"
                 ? "bg-card border-border text-foreground"
                 : "bg-card border-border text-foreground",
             )}
           >
             {t.variant === "success" ? (
-              <CheckCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-green-500" />
+              <CheckCircle
+                aria-hidden
+                className="mt-0.5 size-4 shrink-0 text-green-500"
+              />
             ) : (
               <XCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-red-500" />
             )}

@@ -37,6 +37,12 @@ export type IncomingMessageEvent = {
   /** Stable channel message ID used for database-backed idempotency. */
   whatsappMessageId?: string | null;
   metadata?: Record<string, unknown>;
+  /**
+   * A channel-decoding failure response. It is persisted without invoking the
+   * receptionist model so an unreadable inbound payload cannot change lead,
+   * booking, or memory state.
+   */
+  safeFallbackReplyText?: string | null;
 };
 
 /**

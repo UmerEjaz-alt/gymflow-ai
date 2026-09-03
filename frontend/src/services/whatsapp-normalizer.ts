@@ -34,6 +34,7 @@ type RawImageMessage = {
 type RawAudioMessage = {
   type: "audio";
   id: string;
+  from: string;
   audio: { id: string; mime_type: string; sha256: string; voice?: boolean };
   timestamp: string;
 };
@@ -294,10 +295,10 @@ export function normalizeIncomingWebhook(
 }
 
 /**
- * Extracts every inbound TEXT event from a Meta webhook batch. Status updates
- * and unsupported message types are intentionally ignored for this transport.
+ * Extracts inbound text and audio events from a Meta webhook batch. Status
+ * updates and unsupported message types are intentionally ignored.
  */
-export function normalizeIncomingTextWebhooks(
+export function normalizeIncomingMessageWebhooks(
   payload: unknown,
 ): IncomingWhatsAppEvent[] {
   if (!isRawWebhookPayload(payload)) return [];
@@ -308,16 +309,19 @@ export function normalizeIncomingTextWebhooks(
       const value = change.value;
       if (!value?.messages?.length) continue;
       for (const raw of value.messages) {
-        if (!isObject(raw) || raw["type"] !== "text") continue;
-        const message = raw as RawTextMessage;
-        if (!message.id || !message.from || !message.text?.body?.trim()) continue;
+        if (!isObject(raw) || (raw["type"] !== "text" && raw["type"] !== "audio"))
+          continue;
+        const message = raw as RawTextMessage | RawAudioMessage;
+        if (!message.id || !message.from) continue;
+        if (message.type === "text" && !message.text?.body?.trim()) continue;
         const contact = value.contacts?.find((item) => item.wa_id === message.from);
+        const extracted = extractContentAndMetadata(message);
         events.push({
           customerPhone: message.from,
           customerName: contact?.profile?.name ?? null,
-          messageType: "text",
-          content: message.text.body.trim(),
-          metadata: {},
+          messageType: message.type,
+          content: extracted.content.trim(),
+          metadata: extracted.metadata,
           whatsappMessageId: message.id,
           timestamp: Number(message.timestamp),
           recipientPhoneNumberId: value.metadata?.phone_number_id ?? null,

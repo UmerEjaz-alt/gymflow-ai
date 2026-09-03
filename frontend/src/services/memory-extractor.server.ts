@@ -104,6 +104,27 @@ export function mergeConversationMemory(
       }
     }
 
+    if (field === "pending_booking") {
+      if (incoming === null) {
+        if (base.pending_booking) {
+          base.pending_booking = null;
+          changed = true;
+        }
+        continue;
+      }
+      if (incoming && typeof incoming === "object") {
+        const mergedDraft = {
+          ...(base.pending_booking ?? {}),
+          ...incoming,
+        };
+        if (JSON.stringify(base.pending_booking) !== JSON.stringify(mergedDraft)) {
+          base.pending_booking = mergedDraft;
+          changed = true;
+        }
+        continue;
+      }
+    }
+
     if (base[field] !== incoming) {
       base[field] = incoming as never;
       changed = true;

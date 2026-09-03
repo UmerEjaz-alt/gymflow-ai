@@ -5,9 +5,7 @@ import type {
 } from "@/types/media-asset";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-type ServiceResult<T> =
-  | { data: T; error: null }
-  | { data: null; error: string };
+type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
 
 /**
  * Returns media assets for the given gym, optionally filtered to a branch.
@@ -40,6 +38,18 @@ export async function createMediaAsset(
   payload: CreateMediaAssetPayload,
 ): Promise<ServiceResult<MediaAsset>> {
   const supabase = await createServerSupabaseClient();
+
+  if (payload.trainer_id) {
+    const { data, error } = await supabase.rpc("replace_trainer_card", {
+      p_gym_id: payload.gym_id,
+      p_branch_id: payload.branch_id,
+      p_trainer_id: payload.trainer_id,
+      p_title: payload.title,
+      p_media_url: payload.media_url,
+    });
+    if (error) return { data: null, error: error.message };
+    return { data: data as MediaAsset, error: null };
+  }
 
   const { data, error } = await supabase
     .from("media_assets")

@@ -1,9 +1,7 @@
 import type { Gym, CreateGymPayload, UpdateGymPayload } from "@/types/gym";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-type ServiceResult<T> =
-  | { data: T; error: null }
-  | { data: null; error: string };
+type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
 
 /**
  * Returns the gym profile owned by the currently authenticated user,
@@ -12,10 +10,7 @@ type ServiceResult<T> =
 export async function getGym(): Promise<ServiceResult<Gym | null>> {
   const supabase = await createServerSupabaseClient();
 
-  const { data, error } = await supabase
-    .from("gyms")
-    .select("*")
-    .maybeSingle();
+  const { data, error } = await supabase.from("gyms").select("*").maybeSingle();
 
   if (error) {
     return { data: null, error: error.message };
@@ -28,9 +23,7 @@ export async function getGym(): Promise<ServiceResult<Gym | null>> {
  * Returns a gym profile by its id.
  * RLS ensures only the gym owner can retrieve the row.
  */
-export async function getGymById(
-  gymId: string,
-): Promise<ServiceResult<Gym | null>> {
+export async function getGymById(gymId: string): Promise<ServiceResult<Gym | null>> {
   const supabase = await createServerSupabaseClient();
 
   const { data, error } = await supabase
@@ -94,18 +87,13 @@ export async function updateGym(
     return { data: null, error: "Not authenticated." };
   }
 
-  let query = supabase
-    .from("gyms")
-    .update(payload)
-    .eq("owner_user_id", user.id);
+  let query = supabase.from("gyms").update(payload).eq("owner_user_id", user.id);
 
   if (gymId) {
     query = query.eq("id", gymId);
   }
 
-  const { data, error } = await query
-    .select()
-    .single();
+  const { data, error } = await query.select().single();
 
   if (error) {
     return { data: null, error: error.message };
@@ -128,10 +116,7 @@ export async function deleteGym(gymId?: string): Promise<{ error: string | null 
     return { error: "Not authenticated." };
   }
 
-  let query = supabase
-    .from("gyms")
-    .delete()
-    .eq("owner_user_id", user.id);
+  let query = supabase.from("gyms").delete().eq("owner_user_id", user.id);
 
   if (gymId) {
     query = query.eq("id", gymId);

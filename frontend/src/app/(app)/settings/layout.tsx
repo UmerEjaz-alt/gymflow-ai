@@ -9,12 +9,9 @@ type SettingsLayoutProps = {
 /** Shared layout for all /settings/* pages — provides the sub-navigation tabs. */
 export default function SettingsLayout({ children }: SettingsLayoutProps) {
   return (
-    <div className="flex min-h-full flex-col">
-      {/* Sub-navigation */}
+    <div className="flex min-h-full flex-col lg:flex-row">
       <SettingsNav />
-
-      {/* Page content */}
-      <div className="flex-1">{children}</div>
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   );
 }

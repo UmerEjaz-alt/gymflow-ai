@@ -1,10 +1,25 @@
 import { BadgeCheck } from "lucide-react";
 import { MembersWorkspace } from "@/features/operations/members-workspace";
-import { getLatestMemberships, getMemberships } from "@/services/membership.server";
+import {
+  getLatestMemberships,
+  getMemberships,
+  importMembersToBranch,
+  type MemberImportInput,
+} from "@/services/membership.server";
+import { getMembershipPackages } from "@/services/membership-package.server";
 import { listMessages } from "@/services/message.server";
 import { resolveActiveBranch } from "@/lib/active-branch.server";
 
 export const dynamic = "force-dynamic";
+
+async function importMembersAction(rows: MemberImportInput[]) {
+  "use server";
+  const resolved = await resolveActiveBranch();
+  if (resolved.error || !resolved.gym || !resolved.branch) {
+    return { data: null, error: resolved.error ?? "Active branch not resolved." };
+  }
+  return importMembersToBranch(resolved.gym.id, resolved.branch, rows);
+}
 
 export default async function MembersPage() {
   const resolved = await resolveActiveBranch();
@@ -12,7 +27,10 @@ export default async function MembersPage() {
     return (
       <Error message={resolved.error ?? "Create a branch before viewing members."} />
     );
-  const memberships = await getMemberships(resolved.gym.id, resolved.branch.id);
+  const [memberships, packages] = await Promise.all([
+    getMemberships(resolved.gym.id, resolved.branch.id),
+    getMembershipPackages(resolved.gym.id, resolved.branch.id),
+  ]);
   if (memberships.error) return <Error message={memberships.error} />;
   const members = await Promise.all(
     getLatestMemberships(memberships.data!).map(async (membership) => ({
@@ -36,7 +54,12 @@ export default async function MembersPage() {
           </p>
         </div>
       </div>
-      <MembersWorkspace initialMembers={members} />
+      <MembersWorkspace
+        initialMembers={members}
+        packages={(packages.data ?? []).filter((item) => item.active)}
+        countryCode={resolved.branch.country_code}
+        onImport={importMembersAction}
+      />
     </div>
   );
 }

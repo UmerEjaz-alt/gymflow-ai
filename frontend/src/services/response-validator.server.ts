@@ -7,18 +7,22 @@
 
 import type { AIResponse } from "@/services/ai-provider";
 import type {
+  AIBookingAction,
+  AIBookingActionType,
   ConversationStage,
   ConversationUnderstanding,
   LeadSignal,
   StructuredAIOutput,
   UnderstandingMemoryUpdates,
 } from "@/types/understanding";
+import type { BookingType } from "@/types/booking";
 import type {
   ExperienceLevel,
   FitnessGoal,
   PersonalTrainingInterest,
   PreferredWorkoutTime,
 } from "@/types/conversation-memory";
+import type { PendingMediaReference } from "@/types/media-asset";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -31,7 +35,14 @@ export type ValidatedResponse = {
   understanding: ConversationUnderstanding;
   usedFallback: boolean;
   mediaActions: Array<{ assetId: string; caption: string | null }>;
+  messageSequence: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; assetId: string; caption: string | null }
+  >;
+  pendingMediaAssetId: string | null;
+  pendingMedia: PendingMediaReference | null;
   selectedBranchId: string | null;
+  bookingAction: AIBookingAction | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -274,8 +285,33 @@ function buildFallback(reason: string): ValidatedResponse {
     understanding: defaultUnderstanding(),
     usedFallback: true,
     mediaActions: [],
+    messageSequence: [],
+    pendingMediaAssetId: null,
+    pendingMedia: null,
     selectedBranchId: null,
+    bookingAction: null,
   };
+}
+
+function parseMessageSequence(value: unknown): ValidatedResponse["messageSequence"] {
+  if (!Array.isArray(value)) return [];
+  const result: ValidatedResponse["messageSequence"] = [];
+  for (const item of value.slice(0, 6)) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Record<string, unknown>;
+    if (raw.type === "text" && typeof raw.text === "string" && raw.text.trim())
+      result.push({ type: "text", text: stripInternalIdentifiers(raw.text.trim()) });
+    if (raw.type === "image" && typeof raw.asset_id === "string" && raw.asset_id.trim())
+      result.push({
+        type: "image",
+        assetId: raw.asset_id.trim(),
+        caption:
+          typeof raw.caption === "string" && raw.caption.trim()
+            ? raw.caption.trim()
+            : null,
+      });
+  }
+  return result;
 }
 
 function parseMediaActions(
@@ -305,6 +341,67 @@ function parseSelectedBranchId(value: unknown): string | null {
     )
     ? value
     : null;
+}
+
+function parsePendingMediaAssetId(value: unknown): string | null {
+  return parseSelectedBranchId(value);
+}
+
+const VALID_BOOKING_ACTIONS: AIBookingActionType[] = [
+  "create",
+  "reschedule",
+  "cancel",
+  "check_availability",
+];
+const VALID_BOOKING_TYPES: BookingType[] = [
+  "gym_visit",
+  "trial_session",
+  "pt_consultation",
+  "pt_session",
+];
+
+function parseBookingAction(value: unknown): AIBookingAction | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (
+    typeof raw.action !== "string" ||
+    !VALID_BOOKING_ACTIONS.includes(raw.action as AIBookingActionType)
+  ) {
+    return null;
+  }
+
+  const action = raw.action as AIBookingActionType;
+  const bookingType =
+    typeof raw.booking_type === "string" &&
+    VALID_BOOKING_TYPES.includes(raw.booking_type as BookingType)
+      ? (raw.booking_type as BookingType)
+      : null;
+  const trainerName =
+    typeof raw.trainer_name === "string" && raw.trainer_name.trim()
+      ? raw.trainer_name.trim()
+      : null;
+  const requestedDate =
+    typeof raw.requested_date === "string" && raw.requested_date.trim()
+      ? raw.requested_date.trim()
+      : null;
+  const requestedTime =
+    typeof raw.requested_time === "string" && raw.requested_time.trim()
+      ? raw.requested_time.trim()
+      : null;
+  const durationMinutes =
+    typeof raw.duration_minutes === "number" &&
+    [30, 45, 60, 90].includes(raw.duration_minutes)
+      ? raw.duration_minutes
+      : null;
+
+  return {
+    action,
+    booking_type: bookingType,
+    trainer_name: trainerName,
+    requested_date: requestedDate,
+    requested_time: requestedTime,
+    duration_minutes: durationMinutes,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -341,8 +438,18 @@ export function validateAIResponse(response: AIResponse): ValidatedResponse {
     mediaActions: parseMediaActions(
       (response.output as StructuredAIOutput).media_actions,
     ),
+    messageSequence: parseMessageSequence(
+      (response.output as StructuredAIOutput).message_sequence,
+    ),
+    pendingMediaAssetId: parsePendingMediaAssetId(
+      (response.output as StructuredAIOutput).pending_media_asset_id,
+    ),
+    pendingMedia: null,
     selectedBranchId: parseSelectedBranchId(
       (response.output as StructuredAIOutput).selected_branch_id,
+    ),
+    bookingAction: parseBookingAction(
+      (response.output as StructuredAIOutput).booking_action,
     ),
   };
 }

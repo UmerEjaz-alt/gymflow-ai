@@ -5,10 +5,15 @@ import type { ConversationUnderstanding } from "@/types/understanding";
 export type ConversationStatus = "active" | "human" | "closed";
 
 /** The channel that supplied the customer's message. */
-export type ConversationSource = "whatsapp" | "simulator" | "playground";
+export type ConversationSource = "whatsapp" | "simulator" | "playground" | "import";
 
 /** Allowed values for the lead pipeline stage field. */
 export type LeadStage = "new_lead" | "qualified" | "trial_booked" | "member" | "lost";
+
+/** The active-lead rule used by the operational Leads workspace. */
+export function isLeadStage(stage: LeadStage) {
+  return stage !== "member" && stage !== "lost";
+}
 
 /** Full conversation row returned from Supabase. */
 export type Conversation = {
@@ -23,6 +28,8 @@ export type Conversation = {
   source: ConversationSource;
   status: ConversationStatus;
   lead_stage: LeadStage;
+  /** Permanent timestamp set when the existing AI lead flow first identifies this lead. */
+  ai_lead_at?: string | null;
   last_message_at: string;
   ai_enabled: boolean;
   intent: string | null;
@@ -43,6 +50,7 @@ export type CreateConversationPayload = {
   source?: ConversationSource;
   status?: ConversationStatus;
   lead_stage?: LeadStage;
+  ai_lead_at?: string | null;
   last_message_at?: string;
   ai_enabled?: boolean;
   intent?: string | null;

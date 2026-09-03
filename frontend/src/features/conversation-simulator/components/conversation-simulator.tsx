@@ -303,9 +303,15 @@ export function ConversationSimulator({
                     </span>
                     <span className="text-muted-foreground flex items-center gap-1 truncate text-xs">
                       {isShared ? (
-                        <Globe className="size-3 shrink-0 text-violet-500" aria-label="Shared number" />
+                        <Globe
+                          className="size-3 shrink-0 text-violet-500"
+                          aria-label="Shared number"
+                        />
                       ) : (
-                        <GitBranch className="size-3 shrink-0 text-blue-500" aria-label="Branch number" />
+                        <GitBranch
+                          className="size-3 shrink-0 text-blue-500"
+                          aria-label="Branch number"
+                        />
                       )}
                       {preview(conversation.messages)}
                     </span>
@@ -329,7 +335,7 @@ export function ConversationSimulator({
               <Avatar>
                 {initials(selected.customer_name, selected.customer_phone)}
               </Avatar>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">
                   {selected.customer_name || "Unnamed customer"}
                 </p>
@@ -343,7 +349,10 @@ export function ConversationSimulator({
                 {selected.branch_id === null ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-2.5 py-1 text-[11px] font-medium text-violet-700 dark:text-violet-400">
                     <Globe className="size-3" />
-                    {selectedEp?.label || selectedEp?.phone_number || "Shared Number"} (All branches)
+                    {selectedEp?.label ||
+                      selectedEp?.phone_number ||
+                      "Shared Number"}{" "}
+                    (All branches)
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-400">
@@ -363,19 +372,25 @@ export function ConversationSimulator({
                   {selected.branch_id === null ? (
                     <>
                       <Globe className="mx-auto mb-2 size-5 text-violet-500" />
-                      <p className="font-medium text-foreground mb-1">Shared WhatsApp Number</p>
+                      <p className="text-foreground mb-1 font-medium">
+                        Shared WhatsApp Number
+                      </p>
                       <p>
-                        This customer messaged your central WhatsApp number. The AI receptionist will ask which branch they want before providing pricing or packages.
+                        This customer messaged your central WhatsApp number. The AI
+                        receptionist will ask which branch they want before providing
+                        pricing or packages.
                       </p>
                     </>
                   ) : (
                     <>
                       <GitBranch className="mx-auto mb-2 size-5 text-blue-500" />
-                      <p className="font-medium text-foreground mb-1">
+                      <p className="text-foreground mb-1 font-medium">
                         {selectedBranch?.branch_name ?? "Branch"} WhatsApp
                       </p>
                       <p>
-                        This customer messaged this branch’s dedicated WhatsApp number. The AI receptionist has this branch’s full pricing, schedule, and facilities.
+                        This customer messaged this branch’s dedicated WhatsApp number.
+                        The AI receptionist has this branch’s full pricing, schedule,
+                        and facilities.
                       </p>
                     </>
                   )}
@@ -388,7 +403,7 @@ export function ConversationSimulator({
 
               {isSending ? (
                 <div className="bg-card flex w-fit items-center gap-2 rounded-2xl rounded-bl-md px-4 py-3 text-sm shadow-sm">
-                  <LoaderCircle className="size-4 animate-spin" /> GymFlow is typing…
+                  <LoaderCircle className="size-4 animate-spin" /> Kroway is typing…
                 </div>
               ) : null}
             </div>
@@ -466,11 +481,14 @@ export function ConversationSimulator({
 
             {activeEndpoints.length === 1 ? (
               // If only ONE active endpoint, display it directly without unnecessary dropdown
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 p-3 text-xs">
-                <Phone className="size-4 text-emerald-600 shrink-0" />
-                <span className="font-semibold">{activeEndpoints[0]?.phone_number}</span>
+              <div className="border-border bg-muted/40 flex items-center gap-2 rounded-lg border p-3 text-xs">
+                <Phone className="size-4 shrink-0 text-emerald-600" />
+                <span className="font-semibold">
+                  {activeEndpoints[0]?.phone_number}
+                </span>
                 <span className="text-muted-foreground">
-                  — {activeEndpoints[0]?.branch_id
+                  —{" "}
+                  {activeEndpoints[0]?.branch_id
                     ? `${branchById.get(activeEndpoints[0].branch_id)?.branch_name ?? "Branch"} (Dedicated)`
                     : "All branches (Shared)"}
                 </span>
@@ -484,7 +502,7 @@ export function ConversationSimulator({
               >
                 {activeEndpoints.map((ep) => {
                   const bName = ep.branch_id
-                    ? branchById.get(ep.branch_id)?.branch_name ?? "Branch"
+                    ? (branchById.get(ep.branch_id)?.branch_name ?? "Branch")
                     : "All branches (Shared)";
                   return (
                     <option key={ep.id} value={ep.id}>
@@ -500,7 +518,7 @@ export function ConversationSimulator({
             )}
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-border">
+          <div className="border-border flex justify-end gap-2 border-t pt-2">
             <Button
               onClick={() => setIsCreateOpen(false)}
               type="button"

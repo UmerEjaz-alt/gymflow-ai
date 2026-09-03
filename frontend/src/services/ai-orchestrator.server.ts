@@ -30,10 +30,7 @@ import {
  *                          composed safely. Must not proceed to any AI action.
  */
 export type OrchestratorAction =
-  | "human_takeover"
-  | "no_reply"
-  | "knowledge_ready"
-  | "knowledge_unavailable";
+  "human_takeover" | "no_reply" | "knowledge_ready" | "knowledge_unavailable";
 
 /**
  * The result returned by processConversation.
@@ -44,8 +41,8 @@ export type OrchestratorAction =
  *               for all other actions to avoid unnecessary data fetching.
  */
 export type OrchestratorResult = {
-  action:    OrchestratorAction;
-  context:   ConversationContext;
+  action: OrchestratorAction;
+  context: ConversationContext;
   knowledge: KnowledgeContext | null;
 };
 
@@ -94,15 +91,12 @@ export async function processConversation(
     // Knowledge fetch failed — no AI reply can be composed safely without
     // the required business data. Return knowledge_unavailable so the caller
     // can handle the failure explicitly (e.g. alert a human agent).
-    console.error(
-      "[AI Orchestrator] Knowledge Layer failed:",
-      knowledgeResult.error,
-    );
+    console.error("[AI Orchestrator] Knowledge Layer failed:", knowledgeResult.error);
     return { action: "knowledge_unavailable", context, knowledge: null };
   }
 
   return {
-    action:    "knowledge_ready",
+    action: "knowledge_ready",
     context,
     knowledge: knowledgeResult.data,
   };

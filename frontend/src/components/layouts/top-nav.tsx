@@ -13,6 +13,8 @@ type TopNavProps = {
   userEmail: string;
   branches?: Branch[];
   activeBranchId?: string | null;
+  gymLogoUrl?: string | null;
+  gymName?: string | null;
 };
 
 /** Shared top navigation for application routes. */
@@ -23,6 +25,8 @@ export function TopNav({
   userEmail,
   branches = [],
   activeBranchId = null,
+  gymLogoUrl = null,
+  gymName = null,
 }: TopNavProps) {
   return (
     <header className="border-border bg-background/95 supports-backdrop-filter:bg-background/60 sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 backdrop-blur lg:px-6">
@@ -49,8 +53,20 @@ export function TopNav({
         )}
       </Button>
 
-      <div className="min-w-0 lg:w-48">
-        <p className="truncate text-sm font-semibold tracking-tight">GymFlow AI</p>
+      <div className="flex min-w-0 items-center gap-2 lg:w-48">
+        <div className="bg-primary text-primary-foreground relative grid size-7 shrink-0 place-items-center overflow-hidden rounded-md text-xs font-bold">
+          G
+          {gymLogoUrl ? (
+            <span
+              aria-hidden
+              className="absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: `url("${gymLogoUrl}")` }}
+            />
+          ) : null}
+        </div>
+        <p className="truncate text-sm font-semibold tracking-tight">
+          {gymName ?? "Kroway"}
+        </p>
       </div>
 
       {/* Branch selector — only visible for multi-branch gyms */}

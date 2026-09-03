@@ -9,11 +9,13 @@
  */
 
 import type { ValidatedResponse } from "@/services/response-validator.server";
-import type { UpdateConversationPayload } from "@/types/conversation";
+import { isLeadStage, type UpdateConversationPayload } from "@/types/conversation";
 import { mergeConversationMemory } from "@/services/memory-extractor.server";
 import { getConversation, updateConversation } from "@/services/conversation.server";
 import { createMessage } from "@/services/message.server";
 import type { MediaAsset } from "@/types/media-asset";
+import type { Message } from "@/types/message";
+import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -26,6 +28,7 @@ export type SaveAIReplyResult = {
   error: string | null;
   /** The text reply message persisted for channel delivery/execution logs. */
   messageId?: string;
+  messages?: Message[];
 };
 
 // ---------------------------------------------------------------------------
@@ -47,6 +50,8 @@ export async function saveAIReply(
   model: string,
   availableMedia: MediaAsset[] = [],
   allowedBranchIds: string[] = [],
+  resolvedBranchSelectionId: string | null = null,
+  resolvedTurn: ResolvedTurnContext | null = null,
 ): Promise<SaveAIReplyResult> {
   // Guard: skip unapproved responses without writing anything
   if (!response.approved) {
@@ -119,12 +124,23 @@ export async function saveAIReply(
     // "neutral" signals do not change lead stage
   }
 
+  // This marker preserves history only. Whether a conversation is a lead is
+  // determined solely by the same lead-stage rule used by the Leads workspace.
+  const effectiveLeadStage = conversationUpdatePayload.lead_stage ?? currentLeadStage;
+  if (!conversationResult.data.ai_lead_at && isLeadStage(effectiveLeadStage)) {
+    conversationUpdatePayload.ai_lead_at = new Date().toISOString();
+  }
+
+  // Branch state is owned by the resolved turn, not optional model JSON. This
+  // prevents an exploratory cross-branch answer from permanently switching a
+  // customer's selected branch.
+  const branchIdToPersist = resolvedBranchSelectionId;
   if (
-    response.selectedBranchId &&
-    allowedBranchIds.includes(response.selectedBranchId) &&
-    conversationResult.data.branch_id !== response.selectedBranchId
+    branchIdToPersist &&
+    allowedBranchIds.includes(branchIdToPersist) &&
+    conversationResult.data.branch_id !== branchIdToPersist
   ) {
-    conversationUpdatePayload.branch_id = response.selectedBranchId;
+    conversationUpdatePayload.branch_id = branchIdToPersist;
   }
 
   const preSaveConversationUpdate = await updateConversation(
@@ -139,54 +155,71 @@ export async function saveAIReply(
     };
   }
 
-  // Step 2: persist the AI message
-  const messageResult = await createMessage({
-    conversation_id: conversationId,
-    sender_type: "ai",
-    message_type: "text",
-    content: response.text,
-    metadata: {
-      model,
-      understanding: response.understanding,
-      fallback_used: response.usedFallback,
-    },
-  });
-
-  if (messageResult.error) {
-    return { saved: false, error: `Failed to save AI message: ${messageResult.error}` };
-  }
-
-  // The AI can only reference asset IDs provided by this gym's knowledge
-  // context. Unknown IDs are ignored, preventing arbitrary media injection.
+  // Persist one deterministic channel-neutral sequence. Unknown assets are ignored.
   const mediaById = new Map(availableMedia.map((asset) => [asset.id, asset]));
-  for (const action of response.mediaActions) {
-    const asset = mediaById.get(action.assetId);
-    if (!asset) continue;
-    const mediaType =
-      asset.media_type === "photo"
-        ? "image"
-        : asset.media_type === "video"
-          ? "video"
-          : "document";
-    const mediaResult = await createMessage({
+  const sequence =
+    response.messageSequence.length > 0
+      ? response.messageSequence
+      : [
+          { type: "text" as const, text: response.text },
+          ...response.mediaActions.map((action) => ({
+            type: "image" as const,
+            assetId: action.assetId,
+            caption: action.caption,
+          })),
+        ];
+  const savedMessages: Message[] = [];
+  let pendingMediaAttached = false;
+  for (const item of sequence) {
+    const isText = item.type === "text";
+    const asset = !isText ? mediaById.get(item.assetId) : null;
+    if (!isText && (!asset || asset.media_type !== "photo")) continue;
+    const attachPendingMedia =
+      isText && response.pendingMedia !== null && !pendingMediaAttached;
+    const result = await createMessage({
       conversation_id: conversationId,
       sender_type: "ai",
-      message_type: mediaType,
-      content: action.caption ?? asset.title,
-      metadata: {
-        media_asset_id: asset.id,
-        media_url: asset.media_url,
-        title: asset.title,
-        model,
-      },
+      message_type: isText ? "text" : "image",
+      content: isText ? item.text : (item.caption ?? asset!.title),
+      metadata: isText
+        ? {
+            model,
+            understanding: response.understanding,
+            fallback_used: response.usedFallback,
+            ...(attachPendingMedia ? { pending_media: response.pendingMedia } : {}),
+            ...(isText && resolvedTurn
+              ? {
+                  turn_context: {
+                    effective_branch_id: resolvedTurn.effectiveBranchId,
+                    is_temporary_branch: resolvedTurn.isTemporaryBranch,
+                    intent: resolvedTurn.intent,
+                    entity: resolvedTurn.entity,
+                  },
+                }
+              : {}),
+          }
+        : {
+            media_asset_id: asset!.id,
+            media_url: asset!.media_url,
+            title: asset!.title,
+            model,
+          },
     });
-    if (mediaResult.error) {
+    if (result.error)
       return {
         saved: false,
-        error: `AI reply saved but media could not be saved: ${mediaResult.error}`,
+        error: `Failed to save AI sequence message: ${result.error}`,
       };
-    }
+    savedMessages.push(result.data!);
+    if (attachPendingMedia) pendingMediaAttached = true;
   }
+  if (savedMessages.length === 0)
+    return { saved: false, error: "AI reply produced no deliverable messages." };
 
-  return { saved: true, error: null, messageId: messageResult.data!.id };
+  return {
+    saved: true,
+    error: null,
+    messageId: savedMessages[0]!.id,
+    messages: savedMessages,
+  };
 }

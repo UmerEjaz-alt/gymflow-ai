@@ -58,7 +58,10 @@ const today = new Date().toISOString().slice(0, 10);
 async function main() {
   let gymId = env.DEFAULT_GYM_ID;
   if (!gymId) {
-    const { data: gyms, error } = await supabase.from("gyms").select("id,gym_name").limit(1);
+    const { data: gyms, error } = await supabase
+      .from("gyms")
+      .select("id,gym_name")
+      .limit(1);
     if (error) throw new Error(`Failed to load gyms: ${error.message}`);
     if (!gyms?.length) throw new Error("No gyms found in the database.");
     gymId = gyms[0].id;
@@ -141,7 +144,9 @@ async function main() {
       process.exit(1);
     }
     if (message.conversation_id !== latestExecution.conversation_id) {
-      console.error("Message conversation_id does not match execution conversation_id.");
+      console.error(
+        "Message conversation_id does not match execution conversation_id.",
+      );
       process.exit(1);
     }
     if (message.sender_type !== "ai") {

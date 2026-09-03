@@ -19,7 +19,7 @@ export function RecentActivityTable({ metrics }: { metrics: DashboardMetrics }) 
           <tbody className="divide-border divide-y">
             {metrics.recentActivity.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
+                <td colSpan={4} className="text-muted-foreground px-6 py-8 text-center">
                   No recent activity found.
                 </td>
               </tr>
@@ -27,21 +27,23 @@ export function RecentActivityTable({ metrics }: { metrics: DashboardMetrics }) 
               metrics.recentActivity.map((activity, i) => (
                 <tr key={i} className="hover:bg-muted/30 transition-colors">
                   <td className="px-6 py-3">
-                    <div className="font-medium">{activity.customerName || "Unknown"}</div>
-                    <div className="text-muted-foreground text-xs">{activity.customerPhone}</div>
+                    <div className="font-medium">
+                      {activity.customerName || "Unknown"}
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      {activity.customerPhone}
+                    </div>
                   </td>
                   <td className="px-6 py-3 capitalize">
                     {activity.leadStage.replace("_", " ")}
                   </td>
-                  <td className="px-6 py-3 capitalize">
-                    {activity.status}
-                  </td>
-                  <td className="px-6 py-3 text-muted-foreground">
+                  <td className="px-6 py-3 capitalize">{activity.status}</td>
+                  <td className="text-muted-foreground px-6 py-3">
                     {new Intl.DateTimeFormat("en-US", {
                       month: "short",
                       day: "numeric",
                       hour: "numeric",
-                      minute: "2-digit"
+                      minute: "2-digit",
                     }).format(new Date(activity.lastMessageAt))}
                   </td>
                 </tr>

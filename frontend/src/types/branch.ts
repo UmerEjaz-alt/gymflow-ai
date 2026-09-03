@@ -10,11 +10,15 @@ export type Branch = {
   // Location & contact
   address: string | null;
   city: string | null;
+  /** ISO 3166-1 alpha-2 country used for local phone-number parsing. */
+  country_code: string | null;
   phone: string | null;
   whatsapp_number: string | null;
   /** Meta WhatsApp Cloud API phone-number ID. Kept server-side for webhook routing. */
   whatsapp_phone_number_id: string | null;
   google_maps_url: string | null;
+  /** Canonical IANA timezone for this physical branch. */
+  timezone: string | null;
 
   // Hours
   opening_hours: OpeningHours | null;
@@ -44,10 +48,12 @@ export type CreateBranchPayload = {
   is_default?: boolean;
   address?: string | null;
   city?: string | null;
+  country_code?: string | null;
   phone?: string | null;
   whatsapp_number?: string | null;
   whatsapp_phone_number_id?: string | null;
   google_maps_url?: string | null;
+  timezone: string;
   opening_hours?: OpeningHours | null;
   general_policies?: string | null;
   trial_policy?: string | null;

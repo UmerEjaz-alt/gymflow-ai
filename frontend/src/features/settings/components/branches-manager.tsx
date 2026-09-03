@@ -32,6 +32,7 @@ type FormFields = {
   phone: string;
   whatsapp_number: string;
   whatsapp_phone_number_id: string;
+  timezone: string;
 };
 
 const EMPTY_FORM: FormFields = {
@@ -41,6 +42,7 @@ const EMPTY_FORM: FormFields = {
   phone: "",
   whatsapp_number: "",
   whatsapp_phone_number_id: "",
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 };
 
 function branchToForm(b: Branch): FormFields {
@@ -51,6 +53,7 @@ function branchToForm(b: Branch): FormFields {
     phone: b.phone ?? "",
     whatsapp_number: b.whatsapp_number ?? "",
     whatsapp_phone_number_id: b.whatsapp_phone_number_id ?? "",
+    timezone: b.timezone ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"),
   };
 }
 
@@ -59,6 +62,7 @@ type FormErrors = Partial<Record<keyof FormFields, string>>;
 function validate(fields: FormFields): FormErrors {
   const errors: FormErrors = {};
   if (!fields.branch_name.trim()) errors.branch_name = "Branch name is required.";
+  if (!isValidTimeZone(fields.timezone)) errors.timezone = "Choose a valid time zone.";
   return errors;
 }
 
@@ -121,6 +125,7 @@ export function BranchesManager({
       phone: fields.phone.trim() || null,
       whatsapp_number: fields.whatsapp_number.trim() || null,
       whatsapp_phone_number_id: fields.whatsapp_phone_number_id.trim() || null,
+      timezone: fields.timezone,
     };
 
     try {
@@ -234,6 +239,11 @@ export function BranchesManager({
                       .join(" · ")}
                   </p>
                 )}
+                <p className="text-muted-foreground mt-0.5 text-xs">
+                  {b.timezone
+                    ? formatTimeZoneLabel(b.timezone)
+                    : "Time zone needs setup"}
+                </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Button
@@ -306,6 +316,25 @@ export function BranchesManager({
               />
             </Field>
           </div>
+          <Field
+            id="br-timezone"
+            label="Time zone"
+            required
+            error={formErrors.timezone}
+          >
+            <select
+              id="br-timezone"
+              value={fields.timezone}
+              onChange={(e) => setField("timezone", e.target.value)}
+              className="border-input bg-background text-foreground focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-sm shadow-sm focus-visible:ring-1 focus-visible:outline-none"
+            >
+              {SUPPORTED_TIME_ZONES.map((timeZone) => (
+                <option key={timeZone} value={timeZone}>
+                  {formatTimeZoneLabel(timeZone)}
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field id="br-address" label="Address">
             <Input
               id="br-address"
@@ -368,6 +397,30 @@ export function BranchesManager({
       />
     </>
   );
+}
+
+const TIME_ZONE_OVERRIDES: Record<string, string> = {
+  "Asia/Karachi": "Pakistan — Karachi",
+  "Europe/London": "United Kingdom — London",
+  "Europe/Berlin": "Germany — Berlin",
+  "Asia/Dubai": "UAE — Dubai",
+  "America/New_York": "United States — New York",
+};
+const SUPPORTED_TIME_ZONES =
+  typeof Intl.supportedValuesOf === "function"
+    ? Array.from(new Set(["UTC", ...Intl.supportedValuesOf("timeZone")]))
+    : ["UTC", ...Object.keys(TIME_ZONE_OVERRIDES)];
+
+function formatTimeZoneLabel(timeZone: string): string {
+  if (TIME_ZONE_OVERRIDES[timeZone]) return TIME_ZONE_OVERRIDES[timeZone];
+  const [region, ...place] = timeZone.split("/");
+  return place.length
+    ? `${region.replace(/_/g, " ")} — ${place.join("/").replace(/_/g, " ")}`
+    : timeZone;
+}
+
+function isValidTimeZone(timeZone: string): boolean {
+  return SUPPORTED_TIME_ZONES.includes(timeZone);
 }
 
 function Field({

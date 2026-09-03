@@ -53,8 +53,8 @@ export default async function AutomationsPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Automations</h1>
           <p className="text-muted-foreground text-sm">
-            Set when GymFlow should follow up for {resolved.branch.branch_name} using
-            the same AI and customer context.
+            Set when Kroway should follow up for {resolved.branch.branch_name} using the
+            same AI and customer context.
           </p>
         </div>
       </div>

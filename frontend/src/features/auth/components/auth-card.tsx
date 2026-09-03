@@ -12,7 +12,7 @@ export function AuthCard({ children, description, title }: AuthCardProps) {
     <section className="border-border bg-card w-full max-w-md rounded-2xl border p-6 shadow-sm sm:p-8">
       <div className="mb-8">
         <div className="bg-primary text-primary-foreground mb-5 grid size-10 place-items-center rounded-xl text-sm font-bold">
-          G
+          K
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         <p className="text-muted-foreground mt-2 text-sm leading-6">{description}</p>

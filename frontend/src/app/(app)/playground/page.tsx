@@ -78,7 +78,12 @@ async function runPipeline(
       context.conversation.id,
       pipelineResult.validatedResponse,
       pipelineResult.aiResponse?.model ?? "unknown",
-      pipelineResult.knowledge?.media ?? [],
+      [
+        ...(pipelineResult.knowledge?.media ?? []),
+        ...(pipelineResult.knowledge?.crossBranchKnowledge?.flatMap(
+          (crossBranch) => crossBranch.media,
+        ) ?? []),
+      ],
       pipelineResult.knowledge?.allBranches?.map((branch) => branch.id) ?? [],
     );
   }

@@ -5,6 +5,7 @@ import { getMembershipPackages } from "@/services/membership-package.server";
 import { convertConversationToMember } from "@/services/membership.server";
 import { listMessages } from "@/services/message.server";
 import { resolveActiveBranch } from "@/lib/active-branch.server";
+import { isLeadStage } from "@/types/conversation";
 
 export const dynamic = "force-dynamic";
 
@@ -38,13 +39,15 @@ export default async function LeadsPage() {
 
   // Unassigned mode: show conversations with branch_id = null (shared WhatsApp endpoint)
   if (resolved.isUnassigned) {
-    const conversations = await listConversations(resolved.gym.id, undefined, "unassigned");
+    const conversations = await listConversations(
+      resolved.gym.id,
+      undefined,
+      "unassigned",
+    );
     if (conversations.error) return <Error message={conversations.error} />;
     const leads = await Promise.all(
       conversations
-        .data!.filter(
-          (item) => item.lead_stage !== "member" && item.lead_stage !== "lost",
-        )
+        .data!.filter((item) => isLeadStage(item.lead_stage))
         .map(async (conversation) => ({
           ...conversation,
           messages: (await listMessages(conversation.id)).data ?? [],
@@ -59,15 +62,12 @@ export default async function LeadsPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Leads — Unassigned</h1>
             <p className="text-muted-foreground text-sm">
-              Conversations received on a shared WhatsApp number where the customer has not yet selected a branch.
+              Conversations received on a shared WhatsApp number where the customer has
+              not yet selected a branch.
             </p>
           </div>
         </div>
-        <LeadsWorkspace
-          initialLeads={leads}
-          packages={[]}
-          onConvert={convertLead}
-        />
+        <LeadsWorkspace initialLeads={leads} packages={[]} onConvert={convertLead} />
       </div>
     );
   }
@@ -84,9 +84,7 @@ export default async function LeadsPage() {
   if (conversations.error) return <Error message={conversations.error} />;
   const leads = await Promise.all(
     conversations
-      .data!.filter(
-        (item) => item.lead_stage !== "member" && item.lead_stage !== "lost",
-      )
+      .data!.filter((item) => isLeadStage(item.lead_stage))
       .map(async (conversation) => ({
         ...conversation,
         messages: (await listMessages(conversation.id)).data ?? [],

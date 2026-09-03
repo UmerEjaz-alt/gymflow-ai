@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { summarizeConversationActivity } from "@/lib/conversation-analytics";
 
 export type DashboardMetrics = {
   totalConversations: number;
@@ -18,6 +19,11 @@ export type DashboardMetrics = {
   aiReplyPercentage: number;
   humanTakeoverPercentage: number;
 
+  peopleAiTalkedTo: number;
+  leadsFound: number;
+  becameMembers: number;
+  leadsWhoBecameMembersPercentage: number;
+
   recentActivity: {
     customerName: string | null;
     customerPhone: string;
@@ -36,7 +42,9 @@ export async function getDashboardMetrics(
   // Fetch conversations for the gym (and branch if specified)
   let convQuery = supabase
     .from("conversations")
-    .select("customer_name, customer_phone, status, lead_stage, last_message_at, ai_enabled, latest_understanding")
+    .select(
+      "id, customer_name, customer_phone, status, lead_stage, last_message_at, ai_enabled, ai_lead_at, latest_understanding",
+    )
     .eq("gym_id", gymId);
 
   if (branchId) {
@@ -47,12 +55,12 @@ export async function getDashboardMetrics(
 
   if (convError) return { data: null, error: convError.message };
 
-  // Fetch messages for the gym (and branch if specified) to aggregate AI vs Human counts
+  // Participant messages are the source of truth for genuine conversation activity.
   let msgQuery = supabase
     .from("messages")
-    .select("sender_type, conversations!inner(gym_id, branch_id)")
+    .select("sender_type, conversation_id, conversations!inner(gym_id, branch_id)")
     .eq("conversations.gym_id", gymId)
-    .in("sender_type", ["ai", "human"]);
+    .in("sender_type", ["customer", "ai", "human"]);
 
   if (branchId) {
     msgQuery = msgQuery.eq("conversations.branch_id", branchId);
@@ -62,11 +70,27 @@ export async function getDashboardMetrics(
 
   if (msgError) return { data: null, error: msgError.message };
 
-  let totalConversations = 0;
-  let activeConversations = 0;
-  let humanTakeovers = 0;
-  let aiConversations = 0;
-  
+  let membershipQuery = supabase
+    .from("memberships")
+    .select("conversation_id")
+    .eq("gym_id", gymId);
+  if (branchId) membershipQuery = membershipQuery.eq("branch_id", branchId);
+  const { data: memberships, error: membershipError } = await membershipQuery;
+  if (membershipError) return { data: null, error: membershipError.message };
+
+  const conversationActivity = summarizeConversationActivity(
+    conversations ?? [],
+    messages ?? [],
+  );
+  const {
+    totalConversations,
+    activeConversations,
+    humanTakeovers,
+    aiConversations,
+    conversationIdsWithActivity,
+    aiConversationIds,
+  } = conversationActivity;
+
   let newLeads = 0;
   let qualifiedLeads = 0;
   let trialBooked = 0;
@@ -75,13 +99,7 @@ export async function getDashboardMetrics(
 
   const stageCounts: Record<string, number> = {};
 
-  for (const conv of (conversations || [])) {
-    totalConversations++;
-    
-    if (conv.status === "active") activeConversations++;
-    if (conv.status === "human") humanTakeovers++;
-    if (conv.ai_enabled) aiConversations++;
-
+  for (const conv of conversations || []) {
     if (conv.lead_stage === "new_lead") newLeads++;
     else if (conv.lead_stage === "qualified") qualifiedLeads++;
     else if (conv.lead_stage === "trial_booked") trialBooked++;
@@ -105,12 +123,21 @@ export async function getDashboardMetrics(
 
       if (rawStage === "handoff") {
         const visitDiscussed =
-          (conv.latest_understanding as { memory_updates?: { visit_discussed?: boolean; trial_discussed?: boolean } } | null)
-            ?.memory_updates?.visit_discussed ||
-          (conv.latest_understanding as { memory_updates?: { visit_discussed?: boolean; trial_discussed?: boolean } } | null)
-            ?.memory_updates?.trial_discussed;
+          (
+            conv.latest_understanding as {
+              memory_updates?: { visit_discussed?: boolean; trial_discussed?: boolean };
+            } | null
+          )?.memory_updates?.visit_discussed ||
+          (
+            conv.latest_understanding as {
+              memory_updates?: { visit_discussed?: boolean; trial_discussed?: boolean };
+            } | null
+          )?.memory_updates?.trial_discussed;
 
-        resolvedStage = conv.lead_stage === "trial_booked" || visitDiscussed ? "decision" : "consideration";
+        resolvedStage =
+          conv.lead_stage === "trial_booked" || visitDiscussed
+            ? "decision"
+            : "consideration";
       } else if (rawStage) {
         resolvedStage = rawStage;
       } else if (conv.lead_stage === "trial_booked") {
@@ -130,27 +157,53 @@ export async function getDashboardMetrics(
   let totalAiReplies = 0;
   let totalHumanReplies = 0;
 
-  for (const msg of (messages || [])) {
-    if (msg.sender_type === "ai") totalAiReplies++;
-    else if (msg.sender_type === "human") totalHumanReplies++;
+  for (const msg of messages || []) {
+    if (msg.sender_type === "ai") {
+      totalAiReplies++;
+    } else if (msg.sender_type === "human") totalHumanReplies++;
   }
 
-  const aiReplyPercentage = totalAiReplies + totalHumanReplies > 0 
-    ? Math.round((totalAiReplies / (totalAiReplies + totalHumanReplies)) * 100) 
-    : 0;
-    
-  const humanTakeoverPercentage = totalConversations > 0 
-    ? Math.round((humanTakeovers / totalConversations) * 100) 
-    : 0;
+  const aiReplyPercentage =
+    totalAiReplies + totalHumanReplies > 0
+      ? Math.round((totalAiReplies / (totalAiReplies + totalHumanReplies)) * 100)
+      : 0;
+
+  const humanTakeoverPercentage =
+    totalConversations > 0
+      ? Math.round((humanTakeovers / totalConversations) * 100)
+      : 0;
+
+  const aiLeadConversationIds = new Set(
+    (conversations ?? [])
+      .filter(
+        (conversation) =>
+          conversation.ai_lead_at && aiConversationIds.has(conversation.id),
+      )
+      .map((conversation) => conversation.id),
+  );
+  const convertedConversationIds = new Set(
+    (memberships ?? [])
+      .map((membership) => membership.conversation_id)
+      .filter((conversationId) => aiLeadConversationIds.has(conversationId)),
+  );
+  const peopleAiTalkedTo = aiConversationIds.size;
+  const leadsFound = aiLeadConversationIds.size;
+  const becameMembers = convertedConversationIds.size;
+  const leadsWhoBecameMembersPercentage =
+    leadsFound > 0 ? Math.round((becameMembers / leadsFound) * 100) : 0;
 
   const understandingDistribution = Object.entries(stageCounts)
     .map(([stage, count]) => ({ stage, count }))
     .sort((a, b) => b.count - a.count);
 
   const recentActivity = (conversations || [])
-    .sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime())
+    .filter((conversation) => conversationIdsWithActivity.has(conversation.id))
+    .sort(
+      (a, b) =>
+        new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime(),
+    )
     .slice(0, 10)
-    .map(c => ({
+    .map((c) => ({
       customerName: c.customer_name,
       customerPhone: c.customer_phone,
       leadStage: c.lead_stage,
@@ -174,6 +227,10 @@ export async function getDashboardMetrics(
       totalHumanReplies,
       aiReplyPercentage,
       humanTakeoverPercentage,
+      peopleAiTalkedTo,
+      leadsFound,
+      becameMembers,
+      leadsWhoBecameMembersPercentage,
       recentActivity,
     },
     error: null,

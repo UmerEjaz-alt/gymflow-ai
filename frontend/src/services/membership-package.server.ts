@@ -6,9 +6,7 @@ import type {
 } from "@/types/membership-package";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-type ServiceResult<T> =
-  | { data: T; error: null }
-  | { data: null; error: string };
+type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
 
 /** Raw row shape from Supabase before normalization. */
 type MembershipPackageRow = {
@@ -64,8 +62,10 @@ function prepareUpdatePayload(payload: UpdateMembershipPackagePayload) {
   const updateData: Record<string, unknown> = {};
 
   if (payload.branch_id !== undefined) updateData.branch_id = payload.branch_id;
-  if (payload.package_name !== undefined) updateData.package_name = payload.package_name;
-  if (payload.duration_months !== undefined) updateData.duration_months = payload.duration_months;
+  if (payload.package_name !== undefined)
+    updateData.package_name = payload.package_name;
+  if (payload.duration_months !== undefined)
+    updateData.duration_months = payload.duration_months;
   if (payload.price !== undefined) updateData.price = payload.price;
   if (payload.currency !== undefined) updateData.currency = payload.currency;
   if (payload.features !== undefined) updateData.features = payload.features ?? [];
@@ -101,7 +101,10 @@ export async function getMembershipPackages(
   const { data, error } = await query;
   if (error) return { data: null, error: error.message };
 
-  return { data: ((data ?? []) as MembershipPackageRow[]).map(normalizeMembershipPackage), error: null };
+  return {
+    data: ((data ?? []) as MembershipPackageRow[]).map(normalizeMembershipPackage),
+    error: null,
+  };
 }
 
 /**
@@ -119,7 +122,10 @@ export async function createMembershipPackage(
     .single();
 
   if (error) return { data: null, error: error.message };
-  return { data: normalizeMembershipPackage(data as MembershipPackageRow), error: null };
+  return {
+    data: normalizeMembershipPackage(data as MembershipPackageRow),
+    error: null,
+  };
 }
 
 /**
@@ -139,7 +145,10 @@ export async function updateMembershipPackage(
     .single();
 
   if (error) return { data: null, error: error.message };
-  return { data: normalizeMembershipPackage(data as MembershipPackageRow), error: null };
+  return {
+    data: normalizeMembershipPackage(data as MembershipPackageRow),
+    error: null,
+  };
 }
 
 /**

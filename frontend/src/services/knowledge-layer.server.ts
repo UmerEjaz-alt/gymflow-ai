@@ -15,14 +15,18 @@ import type { Branch } from "@/types/branch";
 import type { MembershipPackage } from "@/types/membership-package";
 import type { Trainer } from "@/types/trainer";
 import type { Facility } from "@/types/facility";
-import type { MediaAsset } from "@/types/media-asset";
+import type { MediaAsset, PendingMediaReference } from "@/types/media-asset";
+import type { GroundedOffer } from "@/types/offer";
 import type { ConversationContext } from "@/services/conversation-manager.server";
+import type { Message } from "@/types/message";
 import { getGymById } from "@/services/gym.server";
 import { getBranches } from "@/services/branch.server";
 import { getMembershipPackages } from "@/services/membership-package.server";
 import { getTrainers } from "@/services/trainer.server";
 import { getFacilities } from "@/services/facility.server";
 import { getMediaAssets } from "@/services/media-asset.server";
+import { getActiveOffers } from "@/services/offer.server";
+import { hasJoiningSalesCue } from "@/lib/joining-intent-cues";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -33,6 +37,8 @@ export type CrossBranchKnowledge = {
   packages: MembershipPackage[];
   facilities: Facility[];
   trainers: Trainer[];
+  media: MediaAsset[];
+  offers: GroundedOffer[];
 };
 
 /**
@@ -47,6 +53,58 @@ export type KnowledgeNeeds = {
   media: boolean;
   policies: boolean;
   openingHours: boolean;
+  offers: boolean;
+};
+
+export type ResolvedEntityType = "facility" | "trainer" | "package";
+
+export type ResolvedTurnEntity = {
+  type: ResolvedEntityType;
+  id: string;
+  name: string;
+} | null;
+
+/**
+ * The sole authoritative interpretation of a customer turn. Downstream
+ * prompt, media, and persistence code consume this object rather than
+ * independently re-reading the customer message.
+ */
+export type ResolvedTurnContext = {
+  gymId: string;
+  primaryBranchId: string | null;
+  effectiveBranchId: string | null;
+  isTemporaryBranch: boolean;
+  persistPrimaryBranchId: string | null;
+  proactiveSalesFollowUp: boolean;
+  intent:
+    | "joining"
+    | "pricing"
+    | "trainer"
+    | "facility"
+    | "media"
+    | "policy"
+    | "hours"
+    | "general";
+  hasExplicitTrainerIntent: boolean;
+  entity: ResolvedTurnEntity;
+  previous: {
+    effectiveBranchId: string | null;
+    isTemporaryBranch: boolean;
+    entity: ResolvedTurnEntity;
+    intent: ResolvedTurnContext["intent"] | null;
+  } | null;
+  directFacilityAvailability: boolean;
+  explicitMediaRequest: boolean;
+  mediaRequest: "none" | "gallery" | "entity" | "more";
+  mediaCategory: string | null;
+  pendingMedia: MediaAsset | null;
+  facts: {
+    packages: MembershipPackage[];
+    trainers: Trainer[];
+    facilities: Facility[];
+    media: MediaAsset[];
+    offers: GroundedOffer[];
+  };
 };
 
 export type KnowledgeContext = {
@@ -77,6 +135,10 @@ export type KnowledgeContext = {
   facilities: Facility[] | null;
   /** Active media assets for the resolved branch. Null when not needed. */
   media: MediaAsset[] | null;
+  /** Single source of truth for resolved branch/entity/intent state this turn. */
+  turn: ResolvedTurnContext;
+  /** Active, server-calculated offers eligible for this turn's primary branch. */
+  offers: GroundedOffer[] | null;
   /**
    * Targeted cross-branch details loaded when a customer asks about other branches
    * (e.g. "What packages does DHA have?" while primary branch is G-14).
@@ -173,15 +235,77 @@ const ALL_KNOWLEDGE_NEEDS: KnowledgeNeeds = {
   media: true,
   policies: true,
   openingHours: true,
+  // Offers are intentionally not part of the generic fallback: promotion
+  // modes must not turn a greeting or an unrelated query into coupon spam.
+  offers: false,
 };
+
+const OFFER_REQUEST_PATTERN =
+  /\b(discounts?|offers?|promotions?|deals?|concession|special price|last price|rate\s*kam|price\s*kam|kuch\s*kam|kam\s*karo|kam\s*kar\s*do|discount\s*(hai|mil)|offer\s*(hai|mil))\b/i;
+const SALES_PATTERN =
+  /\b(fee|fees|price|pricing|rate|charges?|package|packages|membership|plan|monthly|join|joining|registration|enroll|budget|kitna|kitne)\b/i;
+const MONEY_OR_PERCENT_PATTERN =
+  /(?:[€£$]\s*\d|\b(?:pkr|rs\.?|rupees?|euros?|dollars?|pounds?)\b\s*\d|\b\d+(?:\.\d+)?\s*(?:%|percent|pkr|rs\.?|rupees?|euros?|dollars?|pounds?))\b/i;
+const RECENT_OFFER_MENTION_PATTERN =
+  /\b(discounts?|offers?|promotions?|deals?|concession|special price|final price|admission fee waived)\b/i;
+
+type OfferTurnRelevance = {
+  explicitlyAsked: boolean;
+  salesRelevant: boolean;
+  contextualFollowUp: boolean;
+};
+
+type OfferFilterOptions = {
+  /** A branch selection immediately following a sales-intent customer turn. */
+  proactiveSalesFollowUp?: boolean;
+};
+
+/**
+ * Recognises a reply that points back to an offer named in the recent AI reply,
+ * without treating ordinary conversational pronouns as offer questions.
+ */
+function getOfferTurnRelevance(
+  messageContent: string,
+  recentMessages: Message[] = [],
+): OfferTurnRelevance {
+  const text = messageContent.toLowerCase();
+  const explicitlyAsked = OFFER_REQUEST_PATTERN.test(text);
+  const salesRelevant = SALES_PATTERN.test(text);
+  const recentAiMentionedOffer = recentMessages
+    .slice(-6)
+    .some(
+      (message) =>
+        message.sender_type === "ai" &&
+        RECENT_OFFER_MENTION_PATTERN.test(message.content),
+    );
+
+  // Examples: "u js said it's €81" and "wo 10 percent wala". A price or
+  // percentage reference plus a recent AI offer mention is specific enough to
+  // re-check live offers, while an unrelated "you said 5 pm" is not.
+  const refersToPriorPrice =
+    MONEY_OR_PERCENT_PATTERN.test(text) &&
+    (/\b(?:you|u)\s*(?:just|js)?\s*(?:said|say|told)\b/i.test(text) ||
+      /\b(?:wo|woh|jo)\b.*\b(?:wala|wali|walay)\b/i.test(text));
+
+  return {
+    explicitlyAsked,
+    salesRelevant,
+    contextualFollowUp: recentAiMentionedOffer && refersToPriorPrice,
+  };
+}
 
 /**
  * Narrows retrieval only when the latest message makes its subject explicit.
  * It is deliberately not an intent system: unclear, conversational, and
  * mixed-topic messages retain the full knowledge set.
  */
-export function inferKnowledgeNeeds(messageContent: string): KnowledgeNeeds {
+export function inferKnowledgeNeeds(
+  messageContent: string,
+  recentMessages: Message[] = [],
+  offerRelevance = getOfferTurnRelevance(messageContent, recentMessages),
+): KnowledgeNeeds {
   const text = messageContent.toLowerCase();
+  const joiningSalesIntent = hasJoiningSalesCue(messageContent);
   const packages =
     /\b(fee|fees|price|pricing|rate|charges?|package|packages|membership|plan|monthly|join|joining|registration|enroll|kitna|kitne)\b/.test(
       text,
@@ -194,7 +318,7 @@ export function inferKnowledgeNeeds(messageContent: string): KnowledgeNeeds {
       text,
     );
   const media =
-    /\b(photo|photos|picture|pictures|image|images|video|videos|brochure|gallery|dekha|dekhna|dikha)\b/.test(
+    /\b(photo|photos|picture|pictures|pic|pics|picutes|image|images|video|videos|brochure|gallery|dekha|dekhna|dikha)\b/.test(
       text,
     );
   const policies =
@@ -205,19 +329,44 @@ export function inferKnowledgeNeeds(messageContent: string): KnowledgeNeeds {
     text,
   );
 
+  const offers =
+    offerRelevance.explicitlyAsked ||
+    offerRelevance.salesRelevant ||
+    offerRelevance.contextualFollowUp;
+
   if (!packages && !trainers && !facilities && !media && !policies && !openingHours) {
     return ALL_KNOWLEDGE_NEEDS;
   }
 
   return {
     all: false,
-    packages,
+    packages: packages || offers || joiningSalesIntent,
     trainers,
     facilities,
-    media,
+    // Trainer cards live in media_assets. Load them alongside trainer records so
+    // the existing channel-neutral media path can deterministically deliver
+    // eligible cards without relying on the model to request them.
+    media: media || trainers || joiningSalesIntent,
     policies,
     openingHours,
+    offers,
   };
+}
+
+function filterOffersForTurn(
+  offers: GroundedOffer[],
+  relevance: OfferTurnRelevance,
+  { proactiveSalesFollowUp = false }: OfferFilterOptions = {},
+): GroundedOffer[] {
+  const { explicitlyAsked, salesRelevant, contextualFollowUp } = relevance;
+  const offerRelevant = explicitlyAsked || contextualFollowUp;
+  return offers.filter((offer) =>
+    offer.promotion_mode === "asked_only"
+      ? offerRelevant
+      : offer.promotion_mode === "relevant_only"
+        ? offerRelevant || salesRelevant
+        : offerRelevant || salesRelevant || proactiveSalesFollowUp,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +402,280 @@ async function fetchActiveMediaAssets(gymId: string, branchId: string) {
   const result = await getMediaAssets(gymId, branchId);
   if (result.error) return { error: result.error };
   return { media: (result.data ?? []).filter((m) => m.active) };
+}
+
+function parsePendingMediaReference(
+  message: Message | undefined,
+): PendingMediaReference | null {
+  const value = message?.metadata?.pending_media;
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (
+    typeof raw.asset_id !== "string" ||
+    typeof raw.branch_id !== "string" ||
+    typeof raw.media_type !== "string" ||
+    typeof raw.context_type !== "string" ||
+    typeof raw.label !== "string"
+  ) {
+    return null;
+  }
+  return {
+    asset_id: raw.asset_id,
+    branch_id: raw.branch_id,
+    media_type: raw.media_type as PendingMediaReference["media_type"],
+    context_type: raw.context_type as PendingMediaReference["context_type"],
+    related_entity_id:
+      typeof raw.related_entity_id === "string" ? raw.related_entity_id : null,
+    label: raw.label,
+  };
+}
+
+async function resolvePendingMedia(
+  gymId: string,
+  messages: Message[],
+  branches: Branch[],
+): Promise<MediaAsset | null> {
+  const previousMessage =
+    messages.length >= 2 ? messages[messages.length - 2] : undefined;
+  const pending =
+    previousMessage?.sender_type === "ai" && previousMessage.message_type === "text"
+      ? parsePendingMediaReference(previousMessage)
+      : null;
+  if (!pending || !branches.some((branch) => branch.id === pending.branch_id))
+    return null;
+
+  const mediaResult = await fetchActiveMediaAssets(gymId, pending.branch_id);
+  if ("error" in mediaResult) return null;
+  const asset = mediaResult.media.find(
+    (candidate) =>
+      candidate.id === pending.asset_id &&
+      candidate.branch_id === pending.branch_id &&
+      candidate.media_type === "photo",
+  );
+  if (!asset) return null;
+
+  if (asset.trainer_id) {
+    const trainersResult = await fetchActiveTrainers(gymId, pending.branch_id);
+    if (
+      "error" in trainersResult ||
+      !trainersResult.trainers.some((trainer) => trainer.id === asset.trainer_id)
+    ) {
+      return null;
+    }
+  }
+
+  return asset;
+}
+
+function parsePreviousTurnContext(
+  message: Message | undefined,
+): ResolvedTurnContext["previous"] {
+  const value = message?.metadata?.turn_context;
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const entityRaw = raw.entity;
+  const entity =
+    entityRaw &&
+    typeof entityRaw === "object" &&
+    typeof (entityRaw as Record<string, unknown>).type === "string" &&
+    typeof (entityRaw as Record<string, unknown>).id === "string" &&
+    typeof (entityRaw as Record<string, unknown>).name === "string"
+      ? {
+          type: (entityRaw as Record<string, unknown>).type as ResolvedEntityType,
+          id: (entityRaw as Record<string, unknown>).id as string,
+          name: (entityRaw as Record<string, unknown>).name as string,
+        }
+      : null;
+  return {
+    effectiveBranchId:
+      typeof raw.effective_branch_id === "string" ? raw.effective_branch_id : null,
+    isTemporaryBranch: raw.is_temporary_branch === true,
+    entity,
+    intent:
+      typeof raw.intent === "string" &&
+      [
+        "joining",
+        "pricing",
+        "trainer",
+        "facility",
+        "media",
+        "policy",
+        "hours",
+        "general",
+      ].includes(raw.intent)
+        ? (raw.intent as ResolvedTurnContext["intent"])
+        : null,
+  };
+}
+
+function classifyTurnIntent(
+  text: string,
+  needs: KnowledgeNeeds,
+  previous: ResolvedTurnContext["previous"],
+): ResolvedTurnContext["intent"] {
+  if (hasJoiningSalesCue(text)) return "joining";
+  if (needs.all) return previous?.intent ?? "general";
+  if (needs.trainers) return "trainer";
+  if (needs.facilities) return "facility";
+  if (needs.packages || needs.offers) return "pricing";
+  if (needs.openingHours) return "hours";
+  if (needs.policies) return "policy";
+  if (needs.media) return "media";
+  return previous?.intent ?? "general";
+}
+
+function isDirectFacilityAvailabilityQuestion(value: string): boolean {
+  return /\b(?:do|does)\s+(?:you|u)(?:\s+\w+){0,2}\s+have\b|\b(?:is|are)\s+there\b|\b(?:is|are)\b.*\bavailable\b|\bcan\s+i\s+(?:use|access)\b/i.test(
+    value,
+  );
+}
+
+function isExplicitMediaRequest(value: string): boolean {
+  return /\bshow\s+me\b|\b(?:show|send)\b.*\b(?:pic|pics|photo|photos|picture|pictures|image|images)\b|\bcan\s+i\s+see\b/i.test(
+    value,
+  );
+}
+
+function resolveMediaRequest(
+  value: string,
+): Pick<
+  ResolvedTurnContext,
+  "explicitMediaRequest" | "mediaRequest" | "mediaCategory"
+> {
+  const text = value.toLowerCase();
+  const explicitMediaRequest =
+    isExplicitMediaRequest(value) ||
+    /\b(photo|photos|picture|pictures|pic|pics|picutes|image|images|gallery|dekha|dekhna|dikha)\b/i.test(
+      value,
+    );
+  const mediaRequest = !explicitMediaRequest
+    ? "none"
+    : /\b(more|aur|another|extra)\b/i.test(text)
+      ? "more"
+      : "gallery";
+  const mediaCategory = /\bsauna\b/i.test(text)
+    ? "sauna"
+    : /\bcardio\b/i.test(text)
+      ? "cardio"
+      : /\b(strength|weights?)\b/i.test(text)
+        ? "strength_area"
+        : /\b(locker|changing)\b/i.test(text)
+          ? "locker_room"
+          : null;
+  return { explicitMediaRequest, mediaRequest, mediaCategory };
+}
+
+function normalizeEntityText(value: string): string {
+  return value
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function resolveNamedEntity<T extends { id: string }>(
+  text: string,
+  items: T[],
+  name: (item: T) => string,
+  collapseEquivalentNames = false,
+): T | null {
+  const normalized = normalizeEntityText(text);
+  const matches = items.filter((item) => {
+    const itemName = normalizeEntityText(name(item));
+    if (!itemName) return false;
+    if (normalized.includes(itemName)) return true;
+    const tokens = itemName.split(" ").filter((token) => token.length >= 3);
+    return tokens.length > 0 && tokens.some((token) => normalized.includes(token));
+  });
+  if (matches.length === 1) return matches[0]!;
+
+  // Legacy facility rows can contain the same logical owner-entered name more
+  // than once. Those are not distinct choices for a customer; keep genuinely
+  // different names ambiguous, but allow the facility resolver to use their
+  // shared grounded name.
+  if (
+    collapseEquivalentNames &&
+    matches.length > 1 &&
+    new Set(matches.map((item) => normalizeEntityText(name(item)))).size === 1
+  ) {
+    return [...matches].sort((left, right) => left.id.localeCompare(right.id))[0]!;
+  }
+
+  return null;
+}
+
+function resolveTurnEntity(
+  text: string,
+  intent: ResolvedTurnContext["intent"],
+  effectiveBranchId: string | null,
+  previous: ResolvedTurnContext["previous"],
+  packages: MembershipPackage[],
+  trainers: Trainer[],
+  facilities: Facility[],
+): ResolvedTurnEntity {
+  const facility = resolveNamedEntity(text, facilities, (item) => item.name, true);
+  if (facility) return { type: "facility", id: facility.id, name: facility.name };
+  const trainer =
+    resolveNamedEntity(text, trainers, (item) => item.full_name) ??
+    (intent === "trainer" && trainers.length === 1 ? trainers[0]! : null);
+  if (trainer) return { type: "trainer", id: trainer.id, name: trainer.full_name };
+  const pkg = resolveNamedEntity(text, packages, (item) => item.package_name);
+  if (pkg) return { type: "package", id: pkg.id, name: pkg.package_name };
+  // A temporary branch reference can continue the previously grounded topic
+  // (for example, the same owner-configured facility at another location).
+  // Re-resolve by the structured entity name against the effective branch's
+  // own records; never reuse the prior branch's entity ID.
+  if (previous?.entity && previous.effectiveBranchId !== effectiveBranchId) {
+    const source =
+      previous.entity.type === "facility"
+        ? facilities
+        : previous.entity.type === "trainer"
+          ? trainers
+          : packages;
+    const name =
+      previous.entity.type === "facility"
+        ? (item: Facility | Trainer | MembershipPackage) =>
+            "name" in item
+              ? item.name
+              : "full_name" in item
+                ? item.full_name
+                : item.package_name
+        : previous.entity.type === "trainer"
+          ? (item: Facility | Trainer | MembershipPackage) =>
+              "full_name" in item
+                ? item.full_name
+                : "name" in item
+                  ? item.name
+                  : item.package_name
+          : (item: Facility | Trainer | MembershipPackage) =>
+              "package_name" in item
+                ? item.package_name
+                : "name" in item
+                  ? item.name
+                  : item.full_name;
+    const matchingEntity = source.filter(
+      (item) =>
+        normalizeEntityText(name(item)) === normalizeEntityText(previous.entity!.name),
+    );
+    if (matchingEntity.length === 1) {
+      const item = matchingEntity[0]!;
+      return {
+        type: previous.entity.type,
+        id: item.id,
+        name: name(item),
+      };
+    }
+  }
+  if (previous?.entity && previous.effectiveBranchId === effectiveBranchId) {
+    const source =
+      previous.entity.type === "facility"
+        ? facilities
+        : previous.entity.type === "trainer"
+          ? trainers
+          : packages;
+    if (source.some((item) => item.id === previous.entity!.id)) return previous.entity;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,53 +752,83 @@ export function detectReferencedBranches(
     return primaryBranchId === allBranches[2].id ? [] : [allBranches[2]];
   }
 
-  return allBranches.filter((b) => {
+  const explicitlyReferenced = allBranches.filter((b) => {
     // Skip if it's the primary branch (already loaded as primary)
     if (primaryBranchId && b.id === primaryBranchId) return false;
 
     if (asksAllBranches) return true;
 
-    // Check full branch name (e.g. "DHA Branch", "G-14 Branch", "Karachi Company")
-    const name = b.branch_name.toLowerCase();
-    if (name && text.includes(name)) return true;
-
-    // Check significant tokens in branch name (e.g. "DHA", "G-14", "F-10", "Karachi", "Company", "Gulberg")
-    const tokens = name
-      .split(/[\s\-_,]+/)
-      .filter((t) => t.length >= 2 && !["branch", "gym", "fitness", "the"].includes(t));
-    for (const token of tokens) {
-      if (text.includes(token)) return true;
-      const cleanToken = token.replace(/[^a-z0-9]/g, "");
-      if (cleanToken.length >= 2 && cleanText.includes(cleanToken)) return true;
-    }
-
-    // Check normalized branch name (e.g. "g14" matches "G-14", "f10" matches "F-10")
-    const cleanName = name.replace(/[^a-z0-9]/g, "");
-    if (cleanName.length >= 3 && cleanText.includes(cleanName)) return true;
-
-    // A gym may name a branch after the business while storing its familiar
-    // area name in the address (for example, "Iron fitness" at "Karachi
-    // Company G-9 Markaz"). Match meaningful adjacent address words so an
-    // explicit location reference still loads that branch's own knowledge.
-    const addressTokens = (b.address ?? "")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((token) => token.length >= 2);
-    for (let index = 0; index < addressTokens.length - 1; index += 1) {
-      const locationPhrase = `${addressTokens[index]} ${addressTokens[index + 1]}`;
-      if (text.includes(locationPhrase)) return true;
-    }
-
-    // Check city/area if distinctive
-    if (b.city && b.city.length >= 4 && text.includes(b.city.toLowerCase())) {
-      const sameCityCount = allBranches.filter(
-        (other) => other.city?.toLowerCase() === b.city?.toLowerCase(),
-      ).length;
-      if (sameCityCount === 1) return true;
-    }
-
-    return false;
+    return branchMatchesText(b, text, cleanText, allBranches);
   });
+
+  return explicitlyReferenced;
+}
+
+function branchMatchesText(
+  branch: Branch,
+  text: string,
+  cleanText: string,
+  allBranches: Branch[],
+): boolean {
+  const name = branch.branch_name.toLowerCase();
+  if (name && text.includes(name)) return true;
+
+  const tokens = name.split(/[\s\-_,]+/).filter(
+    (token) =>
+      token.length >= 2 &&
+      !["branch", "gym", "fitness", "the"].includes(token) &&
+      allBranches.filter((other) =>
+        other.branch_name
+          .toLowerCase()
+          .split(/[\s\-_,]+/)
+          .includes(token),
+      ).length === 1,
+  );
+  for (const token of tokens) {
+    if (text.includes(token)) return true;
+    const cleanToken = token.replace(/[^a-z0-9]/g, "");
+    if (cleanToken.length >= 2 && cleanText.includes(cleanToken)) return true;
+  }
+
+  const cleanName = name.replace(/[^a-z0-9]/g, "");
+  if (cleanName.length >= 3 && cleanText.includes(cleanName)) return true;
+
+  const addressTokens = (branch.address ?? "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 2);
+  for (let index = 0; index < addressTokens.length - 1; index += 1) {
+    if (text.includes(`${addressTokens[index]} ${addressTokens[index + 1]}`))
+      return true;
+  }
+  // Sector/area identifiers such as G-14, G14, and G 14 are meaningful
+  // aliases even when they are stored only in the branch address.
+  if (
+    addressTokens.some(
+      (token) => /^[a-z]{1,3}\d{1,3}$/.test(token) && cleanText.includes(token),
+    )
+  ) {
+    return true;
+  }
+  const addressAreaAliases = (branch.address ?? "").matchAll(
+    /\b([a-z]{1,3})\s*-?\s*(\d{1,3})\b/gi,
+  );
+  for (const match of addressAreaAliases) {
+    if (cleanText.includes(`${match[1]}${match[2]}`.toLowerCase())) return true;
+  }
+
+  if (
+    branch.city &&
+    branch.city.length >= 4 &&
+    text.includes(branch.city.toLowerCase())
+  ) {
+    const sameCityCount = allBranches.filter(
+      (other) => other.city?.toLowerCase() === branch.city?.toLowerCase(),
+    ).length;
+    if (sameCityCount === 1) return true;
+  }
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,9 +866,10 @@ export async function buildKnowledgeContext(
         needsMedia: false,
       }
     : STRATEGY[messageType];
-  const needs = ctx.automationInstruction
+  const offerRelevance = getOfferTurnRelevance(customerText, ctx.latestMessages);
+  let needs = ctx.automationInstruction
     ? ALL_KNOWLEDGE_NEEDS
-    : inferKnowledgeNeeds(customerText);
+    : inferKnowledgeNeeds(customerText, ctx.latestMessages, offerRelevance);
 
   // ── Resolve branch ────────────────────────────────────────────────────────
   const { branch, allBranches, isMultiBranch } = await resolveBranch(
@@ -424,14 +878,91 @@ export async function buildKnowledgeContext(
   );
 
   const branchId = branch?.id ?? null;
+  const previousAiText = [...ctx.latestMessages]
+    .reverse()
+    .find(
+      (message) =>
+        message.id !== ctx.latestCustomerMessage.id &&
+        message.sender_type === "ai" &&
+        message.message_type === "text",
+    );
+  const previous = parsePreviousTurnContext(previousAiText);
+  const pendingMedia = ctx.automationInstruction
+    ? null
+    : await resolvePendingMedia(gymId, ctx.latestMessages, allBranches);
 
   // ── Detect cross-branch references or branch selections in customer message ──
   // When primary branch is established (branchId != null), loads data for other branches being asked about.
   // When unresolved (branchId === null), loads data for any specifically named branch so the AI can
   // answer explicit branch queries or immediately provide details in the SAME TURN upon branch selection.
-  const referencedBranches = isMultiBranch
+  const explicitlyReferencedBranches = isMultiBranch
     ? detectReferencedBranches(customerText, allBranches, branchId)
     : [];
+  // When exactly one alternate location exists, a branch-relative continuation
+  // of a previously resolved entity can safely use that location's own facts.
+  // This is intentionally structural (current branch + one alternative +
+  // grounded prior entity), rather than a dictionary of language-specific
+  // spellings for "other".
+  const alternateBranches = branchId
+    ? allBranches.filter((item) => item.id !== branchId)
+    : [];
+  const customerMentionsPrimaryBranch = branch
+    ? branchMatchesText(
+        branch,
+        customerText.toLocaleLowerCase(),
+        customerText.toLocaleLowerCase().replace(/[^a-z0-9]/g, ""),
+        allBranches,
+      )
+    : false;
+  const implicitAlternateBranch =
+    explicitlyReferencedBranches.length === 0 &&
+    branchId !== null &&
+    previous?.entity != null &&
+    alternateBranches.length === 1 &&
+    /\bbranch(?:es)?\b/i.test(customerText) &&
+    !customerMentionsPrimaryBranch
+      ? alternateBranches
+      : [];
+  const referencedBranches =
+    explicitlyReferencedBranches.length > 0
+      ? explicitlyReferencedBranches
+      : implicitAlternateBranch.length > 0
+        ? implicitAlternateBranch
+        : previous?.isTemporaryBranch &&
+            previous.effectiveBranchId &&
+            previous.effectiveBranchId !== branchId &&
+            allBranches.some((item) => item.id === previous.effectiveBranchId)
+          ? [allBranches.find((item) => item.id === previous.effectiveBranchId)!]
+          : [];
+
+  // A short branch answer (e.g. "G-9") inherits the immediately preceding
+  // joining/pricing context for proactive promotions. This is turn-local: it
+  // neither changes branch selection nor makes relevant-only/asked-only offers
+  // appear outside their configured modes.
+  const proactiveSalesFollowUp =
+    !ctx.automationInstruction &&
+    !branchId &&
+    referencedBranches.length === 1 &&
+    previous?.intent === "joining";
+  // An unresolved conversation that names exactly one branch can safely load
+  // that branch's candidates. The single existing model call then determines
+  // semantically whether it is a joining commitment; this preload itself never
+  // persists a branch or sends media.
+  const resolvedBranchCandidate =
+    !ctx.automationInstruction && !branchId && referencedBranches.length === 1;
+  if (proactiveSalesFollowUp || resolvedBranchCandidate) {
+    needs = { ...needs, packages: true, offers: true, media: true };
+  }
+  const provisionalIntent = classifyTurnIntent(customerText, needs, previous);
+  if (previous?.entity?.type === "package") {
+    needs = { ...needs, packages: true };
+  }
+  if (previous?.entity?.type === "trainer" || provisionalIntent === "trainer") {
+    needs = { ...needs, trainers: true, media: true };
+  }
+  if (previous?.entity?.type === "facility" || provisionalIntent === "facility") {
+    needs = { ...needs, facilities: true, media: true };
+  }
 
   // ── Parallel fetches ─────────────────────────────────────────────────────
   const [
@@ -459,8 +990,8 @@ export async function buildKnowledgeContext(
     referencedBranches.length > 0
       ? Promise.all(
           referencedBranches.map(async (rb) => {
-            const [pkgs, facs, trns] = await Promise.all([
-              needs.packages
+            const [pkgs, facs, trns, media] = await Promise.all([
+              needs.packages || needs.offers
                 ? fetchActivePackages(gymId, rb.id)
                 : Promise.resolve({ packages: [] }),
               needs.facilities
@@ -469,12 +1000,17 @@ export async function buildKnowledgeContext(
               needs.trainers
                 ? fetchActiveTrainers(gymId, rb.id)
                 : Promise.resolve({ trainers: [] }),
+              needs.media
+                ? fetchActiveMediaAssets(gymId, rb.id)
+                : Promise.resolve({ media: [] }),
             ]);
             return {
               branch: rb,
               packages: "packages" in pkgs ? (pkgs.packages ?? []) : [],
               facilities: "facilities" in facs ? (facs.facilities ?? []) : [],
               trainers: "trainers" in trns ? (trns.trainers ?? []) : [],
+              media: "media" in media ? (media.media ?? []) : [],
+              offers: [],
             } as CrossBranchKnowledge;
           }),
         )
@@ -499,7 +1035,94 @@ export async function buildKnowledgeContext(
   const trainers = trainersResult ? trainersResult.trainers : null;
   const facilities = facilitiesResult ? facilitiesResult.facilities : null;
   const media = mediaResult ? mediaResult.media : null;
-  const crossBranchKnowledge = crossBranchResults ?? null;
+  const primaryPackages = packages ?? [];
+  const primaryOffersResult =
+    needs.offers && branch?.timezone
+      ? await getActiveOffers(
+          gymId,
+          branchId,
+          primaryPackages,
+          branch?.timezone ?? null,
+        )
+      : { data: null, error: null };
+  if (primaryOffersResult.error)
+    return { data: null, error: `Offers fetch failed: ${primaryOffersResult.error}` };
+  const offers = primaryOffersResult.data
+    ? filterOffersForTurn(primaryOffersResult.data, offerRelevance, {
+        proactiveSalesFollowUp,
+      })
+    : null;
+  const crossBranchKnowledge = crossBranchResults
+    ? await Promise.all(
+        crossBranchResults.map(async (crossBranch) => {
+          if (!needs.offers) return crossBranch;
+          if (!crossBranch.branch.timezone) return { ...crossBranch, offers: [] };
+          const offerResult = await getActiveOffers(
+            gymId,
+            crossBranch.branch.id,
+            crossBranch.packages,
+            crossBranch.branch.timezone,
+          );
+          if (offerResult.error) throw new Error(offerResult.error);
+          return {
+            ...crossBranch,
+            offers: filterOffersForTurn(offerResult.data ?? [], offerRelevance, {
+              proactiveSalesFollowUp,
+            }),
+          };
+        }),
+      )
+    : null;
+
+  const effectiveBranchId =
+    referencedBranches.length === 1 ? referencedBranches[0]!.id : branchId;
+  const effectiveCrossBranch = crossBranchKnowledge?.find(
+    (item) => item.branch.id === effectiveBranchId,
+  );
+  const effectivePackages = effectiveCrossBranch?.packages ?? packages ?? [];
+  const effectiveTrainers = effectiveCrossBranch?.trainers ?? trainers ?? [];
+  const effectiveFacilities = effectiveCrossBranch?.facilities ?? facilities ?? [];
+  const effectiveMedia = effectiveCrossBranch?.media ?? media ?? [];
+  const effectiveOffers = effectiveCrossBranch?.offers ?? offers ?? [];
+  const intent = classifyTurnIntent(customerText, needs, previous);
+  const entity = resolveTurnEntity(
+    customerText,
+    intent,
+    effectiveBranchId,
+    previous,
+    effectivePackages,
+    effectiveTrainers,
+    effectiveFacilities,
+  );
+  const mediaRequest = resolveMediaRequest(customerText);
+  const turn: ResolvedTurnContext = {
+    gymId,
+    primaryBranchId: branchId,
+    effectiveBranchId,
+    isTemporaryBranch:
+      effectiveBranchId !== null &&
+      effectiveBranchId !== branchId &&
+      !proactiveSalesFollowUp,
+    persistPrimaryBranchId: proactiveSalesFollowUp ? effectiveBranchId : null,
+    proactiveSalesFollowUp,
+    intent,
+    hasExplicitTrainerIntent: !needs.all && needs.trainers,
+    entity,
+    previous,
+    directFacilityAvailability:
+      entity?.type === "facility" && isDirectFacilityAvailabilityQuestion(customerText),
+    explicitMediaRequest: mediaRequest.explicitMediaRequest,
+    mediaRequest: entity ? "entity" : mediaRequest.mediaRequest,
+    mediaCategory: mediaRequest.mediaCategory,
+    pendingMedia,
+    facts: {
+      packages: effectivePackages,
+      trainers: effectiveTrainers,
+      facilities: effectiveFacilities,
+      media: effectiveMedia,
+      offers: effectiveOffers,
+    },
+  };
 
   const loaded: string[] = [];
   if (gym) loaded.push("gym");
@@ -508,6 +1131,7 @@ export async function buildKnowledgeContext(
   if (trainers) loaded.push(`${trainers.length} trainer(s)`);
   if (facilities) loaded.push(`${facilities.length} facility(ies)`);
   if (media) loaded.push(`${media.length} media asset(s)`);
+  if (offers) loaded.push(`${offers.length} active offer(s)`);
   if (crossBranchKnowledge && crossBranchKnowledge.length > 0) {
     loaded.push(
       `cross-branch:${crossBranchKnowledge.map((c) => c.branch.branch_name).join(",")}`,
@@ -529,6 +1153,8 @@ export async function buildKnowledgeContext(
       trainers,
       facilities,
       media,
+      turn,
+      offers,
       crossBranchKnowledge,
       needs,
       summary,

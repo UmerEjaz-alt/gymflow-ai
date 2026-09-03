@@ -13,13 +13,13 @@ export type { PromptPayload };
 /** The normalised response returned by every AI provider implementation. */
 export type AIResponse = {
   /** Raw text produced by the provider for debugging/fallback handling. */
-  rawText:      string;
+  rawText: string;
   /** Parsed structured output when JSON parsing succeeds. */
-  output:       StructuredAIOutput | null;
+  output: StructuredAIOutput | null;
   /** JSON parsing error details when output is null. */
-  parseError:   string | null;
+  parseError: string | null;
   /** The model identifier that produced the response (e.g. "llama3-8b-8192"). */
-  model:        string;
+  model: string;
   /**
    * The reason the model stopped generating.
    * Typical values: "stop", "length", "content_filter".

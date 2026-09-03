@@ -5,9 +5,7 @@ import type {
 } from "@/types/trainer";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-type ServiceResult<T> =
-  | { data: T; error: null }
-  | { data: null; error: string };
+type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
 
 /**
  * Returns trainers for the given gym, optionally filtered to a branch.

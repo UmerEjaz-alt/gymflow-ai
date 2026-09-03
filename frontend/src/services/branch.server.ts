@@ -1,7 +1,17 @@
 import type { Branch, CreateBranchPayload, UpdateBranchPayload } from "@/types/branch";
+import { isSupportedCountry } from "libphonenumber-js";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type Result<T> = { data: T; error: null } | { data: null; error: string };
+
+function hasValidCountryCode(payload: { country_code?: string | null }) {
+  return (
+    payload.country_code === undefined ||
+    payload.country_code === null ||
+    payload.country_code === "" ||
+    isSupportedCountry(payload.country_code.trim().toUpperCase())
+  );
+}
 
 /**
  * Returns all branches for the given gym, ordered with default branch first.
@@ -56,10 +66,13 @@ export async function getDefaultBranch(gymId: string): Promise<Result<Branch | n
 export async function createBranch(
   payload: CreateBranchPayload,
 ): Promise<Result<Branch>> {
+  if (!hasValidCountryCode(payload))
+    return { data: null, error: "Choose a valid default phone country." };
   const supabase = await createServerSupabaseClient();
+  const countryCode = payload.country_code?.trim().toUpperCase() || null;
   const { data, error } = await supabase
     .from("branches")
-    .insert({ ...payload, faqs: payload.faqs ?? [] })
+    .insert({ ...payload, country_code: countryCode, faqs: payload.faqs ?? [] })
     .select()
     .single();
   if (error) return { data: null, error: error.message };
@@ -74,10 +87,19 @@ export async function updateBranch(
   id: string,
   payload: UpdateBranchPayload,
 ): Promise<Result<Branch>> {
+  if (!hasValidCountryCode(payload))
+    return { data: null, error: "Choose a valid default phone country." };
   const supabase = await createServerSupabaseClient();
+  const normalizedPayload =
+    payload.country_code === undefined
+      ? payload
+      : {
+          ...payload,
+          country_code: payload.country_code?.trim().toUpperCase() || null,
+        };
   const { data, error } = await supabase
     .from("branches")
-    .update(payload)
+    .update(normalizedPayload)
     .eq("id", id)
     .select()
     .single();
@@ -132,8 +154,11 @@ export async function getBranchIds(gymId: string): Promise<Result<string[]>> {
 export async function resolveWhatsAppBranch(
   phoneNumberId: string | null,
   displayPhone: string | null,
-): Promise<Result<{ gymId: string; branchId: string | null; endpointId?: string | null } | null>> {
-  const { resolveWhatsAppEndpoint } = await import("@/services/whatsapp-endpoint.server");
+): Promise<
+  Result<{ gymId: string; branchId: string | null; endpointId?: string | null } | null>
+> {
+  const { resolveWhatsAppEndpoint } =
+    await import("@/services/whatsapp-endpoint.server");
   return resolveWhatsAppEndpoint(phoneNumberId, displayPhone);
 }
 

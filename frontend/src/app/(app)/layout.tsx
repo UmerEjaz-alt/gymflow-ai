@@ -3,7 +3,6 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/layouts/app-shell";
-import { ToastProvider } from "@/components/ui/toast";
 import { getCurrentUser } from "@/services/auth.server";
 import { getGym } from "@/services/gym.server";
 import { getBranches } from "@/services/branch.server";
@@ -34,14 +33,14 @@ export default async function ApplicationLayout({
     : (branches.find((b) => b.is_default)?.id ?? branches[0]?.id ?? null);
 
   return (
-    <ToastProvider>
-      <AppShell
-        userEmail={user.email ?? "User"}
-        branches={branches}
-        activeBranchId={validBranchId}
-      >
-        {children}
-      </AppShell>
-    </ToastProvider>
+    <AppShell
+      userEmail={user.email ?? "User"}
+      gymName={gymResult.data?.gym_name}
+      gymLogoUrl={gymResult.data?.logo_url}
+      branches={branches}
+      activeBranchId={validBranchId}
+    >
+      {children}
+    </AppShell>
   );
 }

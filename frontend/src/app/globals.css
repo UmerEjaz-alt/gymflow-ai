@@ -58,7 +58,9 @@
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --font-sans: ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-archivo), "Archivo", sans-serif;
+  --font-sans:
+    var(--font-sans), "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
@@ -69,4 +71,8 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+.font-display {
+  font-family: var(--font-archivo), "Archivo", sans-serif;
 }

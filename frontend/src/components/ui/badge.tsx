@@ -10,7 +10,7 @@ type BadgeProps = {
 
 const variantClasses: Record<BadgeVariant, string> = {
   success: "bg-green-500/10 text-green-700 dark:text-green-400",
-  muted:   "bg-muted text-muted-foreground",
+  muted: "bg-muted text-muted-foreground",
   default: "bg-primary/10 text-primary",
 };
 

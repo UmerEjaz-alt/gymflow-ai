@@ -13,6 +13,10 @@ type DialogProps = {
   children: ReactNode;
   /** Max-width class, defaults to max-w-lg */
   size?: string;
+  /** Additional classes for the dialog panel. */
+  panelClassName?: string;
+  /** Additional classes for the dialog body. */
+  contentClassName?: string;
 };
 
 /**
@@ -26,6 +30,8 @@ export function Dialog({
   description,
   children,
   size = "max-w-lg",
+  panelClassName,
+  contentClassName,
 }: DialogProps) {
   // Close on Escape
   useEffect(() => {
@@ -40,7 +46,9 @@ export function Dialog({
   // Prevent body scroll while open
   useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [open]);
 
   if (!open) return null;
@@ -63,18 +71,22 @@ export function Dialog({
       {/* Panel */}
       <div
         className={cn(
-          "border-border bg-card relative z-10 w-full rounded-xl border shadow-xl",
+          "border-border bg-card relative z-10 flex min-h-0 w-full flex-col rounded-xl border shadow-xl",
           size,
+          panelClassName,
         )}
       >
         {/* Header */}
-        <div className="border-border flex items-start justify-between border-b px-6 py-4">
+        <div className="border-border flex shrink-0 items-start justify-between border-b px-4 py-3 sm:px-6 sm:py-4">
           <div>
             <h2 id="dialog-title" className="text-base font-semibold">
               {title}
             </h2>
             {description ? (
-              <p id="dialog-description" className="text-muted-foreground mt-0.5 text-sm">
+              <p
+                id="dialog-description"
+                className="text-muted-foreground mt-0.5 text-sm"
+              >
                 {description}
               </p>
             ) : null}
@@ -90,7 +102,9 @@ export function Dialog({
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5">{children}</div>
+        <div className={cn("min-h-0 px-4 py-4 sm:px-6 sm:py-5", contentClassName)}>
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -136,7 +150,7 @@ export function ConfirmDialog({
           type="button"
           onClick={onConfirm}
           disabled={isConfirming}
-          className="bg-red-600 hover:bg-red-700 rounded-md px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50"
+          className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50"
         >
           {isConfirming ? "Deleting…" : confirmLabel}
         </button>

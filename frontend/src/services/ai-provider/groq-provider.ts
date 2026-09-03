@@ -29,7 +29,22 @@ type GroqChatResponse = {
   }>;
 };
 
+type GroqErrorResponse = {
+  error?: {
+    code?: unknown;
+  };
+};
+
+type GroqRequestResult = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  json: GroqChatResponse | null;
+  errorBody: string | null;
+};
+
 const MAX_OUTPUT_TOKENS = 640;
+const GROQ_REQUEST_TIMEOUT_MS = 25_000;
 
 function estimateTokens(text: string): number {
   // Development diagnostic only. This intentionally avoids a runtime tokenizer
@@ -155,30 +170,44 @@ export class GroqProvider implements AIProvider {
       });
     }
 
-    const response = await fetch(GROQ_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    let json: GroqChatResponse | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await fetchGroqWithTimeout(this.apiKey, {
         model: this.model,
         messages,
         temperature: 0.4,
         max_tokens: MAX_OUTPUT_TOKENS,
         response_format: { type: "json_object" },
-      }),
-    });
+      });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "(no body)");
+      if (result.ok && result.json) {
+        json = result.json;
+        break;
+      }
 
-      throw new Error(
-        `Groq API error ${response.status} ${response.statusText}: ${body}`,
-      );
+      const body = result.errorBody ?? "(no body)";
+      if (isStructuredOutputValidationFailure(result.status, body)) {
+        if (attempt === 0) {
+          console.warn(
+            "[Groq] Structured-output validation failed; retrying this turn once.",
+            { status: result.status, code: "json_validate_failed" },
+          );
+          continue;
+        }
+
+        console.error(
+          "[Groq] Structured-output validation failed again after the single retry.",
+          { status: result.status, code: "json_validate_failed" },
+        );
+        throw new Error("Groq structured-output validation failed after one retry.");
+      }
+
+      throw new Error(`Groq API error ${result.status} ${result.statusText}: ${body}`);
     }
 
-    const json = (await response.json()) as GroqChatResponse;
+    if (!json) {
+      throw new Error("Groq API returned no response after structured-output retry.");
+    }
 
     const choice = json.choices[0];
 
@@ -196,6 +225,70 @@ export class GroqProvider implements AIProvider {
       model: json.model,
       finishReason: choice.finish_reason ?? "unknown",
     };
+  }
+}
+
+async function fetchGroqWithTimeout(
+  apiKey: string,
+  body: Record<string, unknown>,
+): Promise<GroqRequestResult> {
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, GROQ_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(GROQ_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      return {
+        ok: true,
+        status: response.status,
+        statusText: response.statusText,
+        json: (await response.json()) as GroqChatResponse,
+        errorBody: null,
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      statusText: response.statusText,
+      json: null,
+      errorBody: await response.text().catch(() => "(no body)"),
+    };
+  } catch (error) {
+    if (timedOut) {
+      console.error("[Groq] Provider request timed out.", {
+        elapsedMs: Date.now() - startedAt,
+        timeoutMs: GROQ_REQUEST_TIMEOUT_MS,
+      });
+      throw new Error(
+        `Groq provider request timed out after ${GROQ_REQUEST_TIMEOUT_MS}ms.`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isStructuredOutputValidationFailure(status: number, body: string): boolean {
+  if (status !== 400) return false;
+  try {
+    const parsed = JSON.parse(body) as GroqErrorResponse;
+    return parsed.error?.code === "json_validate_failed";
+  } catch {
+    return false;
   }
 }
 

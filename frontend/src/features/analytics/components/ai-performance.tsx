@@ -5,21 +5,23 @@ export function AIPerformance({ metrics }: { metrics: DashboardMetrics }) {
   return (
     <div className="bg-card border-border flex h-full flex-col rounded-xl border p-6">
       <h2 className="mb-4 text-lg font-semibold tracking-tight">AI Performance</h2>
-      
+
       <div className="mb-6 space-y-4">
         {/* Reply Breakdown */}
         <div>
           <div className="mb-2 flex items-center justify-between text-sm font-medium">
             <span>Reply Breakdown</span>
-            <span className="text-muted-foreground text-xs">{metrics.totalAiReplies + metrics.totalHumanReplies} total replies</span>
+            <span className="text-muted-foreground text-xs">
+              {metrics.totalAiReplies + metrics.totalHumanReplies} total replies
+            </span>
           </div>
           <div className="bg-muted flex h-4 w-full overflow-hidden rounded-full">
-            <div 
+            <div
               className="bg-purple-500 transition-all duration-500"
               style={{ width: `${metrics.aiReplyPercentage}%` }}
               title="AI Replies"
             />
-            <div 
+            <div
               className="bg-orange-500 transition-all duration-500"
               style={{ width: `${100 - metrics.aiReplyPercentage}%` }}
               title="Human Replies"

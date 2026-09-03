@@ -4,7 +4,11 @@ import {
   ConversationSimulator,
   type SimulatorConversation,
 } from "@/features/conversation-simulator/components/conversation-simulator";
-import { createConversation, listConversations, getConversation } from "@/services/conversation.server";
+import {
+  createConversation,
+  listConversations,
+  getConversation,
+} from "@/services/conversation.server";
 import { processIncomingConversationTurn } from "@/services/conversation-turn.server";
 import { getGym } from "@/services/gym.server";
 import { getBranches } from "@/services/branch.server";
@@ -84,7 +88,9 @@ async function createSimulatedCustomer(
 
   if (endpointId) {
     const endpointsResult = await getWhatsAppEndpoints(gymResult.data.id);
-    const targetEndpoint = (endpointsResult.data ?? []).find((e) => e.id === endpointId);
+    const targetEndpoint = (endpointsResult.data ?? []).find(
+      (e) => e.id === endpointId,
+    );
 
     if (targetEndpoint) {
       const result = await createConversation({
@@ -95,7 +101,9 @@ async function createSimulatedCustomer(
         customer_phone: phone.trim(),
         source: "simulator",
       });
-      return result.error ? { error: result.error } : { conversationId: result.data!.id };
+      return result.error
+        ? { error: result.error }
+        : { conversationId: result.data!.id };
     }
   }
 
@@ -116,10 +124,7 @@ async function createSimulatedCustomer(
  * Sends a message within a simulated conversation.
  * Uses the exact production conversation turn pipeline.
  */
-async function sendSimulatorMessage(
-  conversationId: string,
-  content: string,
-) {
+async function sendSimulatorMessage(conversationId: string, content: string) {
   "use server";
   const gymResult = await getGym();
   if (gymResult.error || !gymResult.data)

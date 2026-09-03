@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { detectReferencedBranches } from "../src/services/knowledge-layer.server.ts";
-import { buildKnowledgeSummary, buildSystemPrompt } from "../src/services/prompt-builder.server.ts";
+import {
+  buildKnowledgeSummary,
+  buildSystemPrompt,
+} from "../src/services/prompt-builder.server.ts";
 import { stripInternalIdentifiers } from "../src/services/response-validator.server.ts";
 
 console.log("=== GymFlow Cross-Branch & Endpoint Verification ===");
@@ -101,7 +104,11 @@ const mockBranches = [
 console.log("\n[Test 1] Testing detectReferencedBranches...");
 
 // A. Established primary branch asking about DHA
-const ref1 = detectReferencedBranches("What packages does DHA have?", mockBranches, mockBranches[0].id);
+const ref1 = detectReferencedBranches(
+  "What packages does DHA have?",
+  mockBranches,
+  mockBranches[0].id,
+);
 assert.equal(ref1.length, 1);
 assert.equal(ref1[0].id, mockBranches[2].id);
 console.log("  ✓ Detected 'DHA' when primary is Karachi Company");
@@ -109,19 +116,29 @@ console.log("  ✓ Detected 'DHA' when primary is Karachi Company");
 // B. Generic inquiry while unresolved (primary branch_id = null)
 const ref2 = detectReferencedBranches("What are your fees?", mockBranches, null);
 assert.equal(ref2.length, 0);
-console.log("  ✓ Generic inquiry while unresolved does NOT trigger branch fetch (AI will ask branch)");
+console.log(
+  "  ✓ Generic inquiry while unresolved does NOT trigger branch fetch (AI will ask branch)",
+);
 
 // C. Explicit branch query while unresolved (primary branch_id = null)
-const ref3 = detectReferencedBranches("What packages does G-14 have?", mockBranches, null);
+const ref3 = detectReferencedBranches(
+  "What packages does G-14 have?",
+  mockBranches,
+  null,
+);
 assert.equal(ref3.length, 1);
 assert.equal(ref3[0].id, mockBranches[1].id);
-console.log("  ✓ Explicit branch query while unresolved detects 'G-14' for targeted knowledge loading");
+console.log(
+  "  ✓ Explicit branch query while unresolved detects 'G-14' for targeted knowledge loading",
+);
 
 // D. Branch selection while unresolved (customer answers "Karachi Company")
 const ref4 = detectReferencedBranches("Karachi Company", mockBranches, null);
 assert.equal(ref4.length, 1);
 assert.equal(ref4[0].id, mockBranches[0].id);
-console.log("  ✓ Customer branch selection 'Karachi Company' detects branch for same-turn knowledge loading");
+console.log(
+  "  ✓ Customer branch selection 'Karachi Company' detects branch for same-turn knowledge loading",
+);
 
 // E. Ordinal branch selection (customer answers "option 1" or "1")
 const ref5 = detectReferencedBranches("option 1", mockBranches, null);
@@ -135,7 +152,12 @@ console.log("  ✓ Customer ordinal selection 'option 1' detects first branch");
 console.log("\n[Test 2] Testing Branch Directory & ID Mapping formatting...");
 
 const mockKnowledge = {
-  gym: { id: "gym-1", gym_name: "Iron Fitness", gym_description: "Premier Gym", email: "info@iron.com" },
+  gym: {
+    id: "gym-1",
+    gym_name: "Iron Fitness",
+    gym_description: "Premier Gym",
+    email: "info@iron.com",
+  },
   branch: null, // Unresolved state
   isMultiBranch: true,
   allBranches: mockBranches,
@@ -171,14 +193,32 @@ const summarySection = buildKnowledgeSummary(mockKnowledge);
 
 // Assert ## Our Branches contains clean names and no inline "Branch ID: a1b2c3d4..."
 assert.ok(summarySection.content.includes("## Our Branches"));
-assert.ok(summarySection.content.includes("- Iron Fitness Karachi Company — Islamabad — Street 5, Sector G-9 Markaz"));
-assert.ok(summarySection.content.includes("- Iron Fitness G-14 — Islamabad — Street 12, Sector G-14/4"));
+assert.ok(
+  summarySection.content.includes(
+    "- Iron Fitness Karachi Company — Islamabad — Street 5, Sector G-9 Markaz",
+  ),
+);
+assert.ok(
+  summarySection.content.includes(
+    "- Iron Fitness G-14 — Islamabad — Street 12, Sector G-14/4",
+  ),
+);
 assert.ok(!summarySection.content.includes("Branch ID: a1b2c3d4-"));
 
 // Assert Internal Branch ID Mapping section is isolated for JSON output
-assert.ok(summarySection.content.includes("## Internal Branch ID Mapping (FOR JSON \"selected_branch_id\" OUTPUT ONLY"));
-assert.ok(summarySection.content.includes(`- "Iron Fitness Karachi Company" -> "${mockBranches[0].id}"`));
-console.log("  ✓ Branch directory is clean (zero raw UUIDs) and ID mapping is isolated for JSON output");
+assert.ok(
+  summarySection.content.includes(
+    '## Internal Branch ID Mapping (FOR JSON "selected_branch_id" OUTPUT ONLY',
+  ),
+);
+assert.ok(
+  summarySection.content.includes(
+    `- "Iron Fitness Karachi Company" -> "${mockBranches[0].id}"`,
+  ),
+);
+console.log(
+  "  ✓ Branch directory is clean (zero raw UUIDs) and ID mapping is isolated for JSON output",
+);
 
 // ---------------------------------------------------------------------------
 // 3. Test System Prompt Anti-UUID Rules
@@ -186,29 +226,49 @@ console.log("  ✓ Branch directory is clean (zero raw UUIDs) and ID mapping is 
 console.log("\n[Test 3] Testing System Prompt Anti-UUID & Natural Speech Rules...");
 
 const prompt = buildSystemPrompt("Iron Fitness", null, null, false, true);
-assert.ok(prompt.content.includes("NEVER mention internal UUIDs, database IDs, branch IDs, asset IDs, or technical identifiers"));
-assert.ok(prompt.content.includes("Which branch are you interested in: Karachi Company or G-14?"));
+assert.ok(
+  prompt.content.includes(
+    "NEVER mention internal UUIDs, database IDs, branch IDs, asset IDs, or technical identifiers",
+  ),
+);
+assert.ok(
+  prompt.content.includes(
+    "Which branch are you interested in: Karachi Company or G-14?",
+  ),
+);
 assert.ok(prompt.content.includes("## Internal Branch ID Mapping"));
-console.log("  ✓ System prompt explicitly forbids UUIDs in replies and guides clean branch questions");
+console.log(
+  "  ✓ System prompt explicitly forbids UUIDs in replies and guides clean branch questions",
+);
 // ---------------------------------------------------------------------------
 // 4. Test Response Validator UUID Scrubbing
 // ---------------------------------------------------------------------------
 console.log("\n[Test 4] Testing Response Validator UUID Scrubbing...");
 
-const dirtyReply1 = "We have two locations: Karachi Company (ID a1b2c3d4-0001-4000-8000-000000000001) and G-14 (ID a1b2c3d4-0002-4000-8000-000000000002). Which one do you prefer?";
+const dirtyReply1 =
+  "We have two locations: Karachi Company (ID a1b2c3d4-0001-4000-8000-000000000001) and G-14 (ID a1b2c3d4-0002-4000-8000-000000000002). Which one do you prefer?";
 const cleanReply1 = stripInternalIdentifiers(dirtyReply1);
-assert.equal(cleanReply1, "We have two locations: Karachi Company and G-14. Which one do you prefer?");
+assert.equal(
+  cleanReply1,
+  "We have two locations: Karachi Company and G-14. Which one do you prefer?",
+);
 console.log("  ✓ stripInternalIdentifiers cleanly scrubs '(ID <uuid>)' tags");
 
-const dirtyReply2 = "Great! You are assigned to branch a1b2c3d4-0001-4000-8000-000000000001. Our package is 8000 PKR.";
+const dirtyReply2 =
+  "Great! You are assigned to branch a1b2c3d4-0001-4000-8000-000000000001. Our package is 8000 PKR.";
 const cleanReply2 = stripInternalIdentifiers(dirtyReply2);
-assert.equal(cleanReply2, "Great! You are assigned to branch . Our package is 8000 PKR.");
+assert.equal(
+  cleanReply2,
+  "Great! You are assigned to branch . Our package is 8000 PKR.",
+);
 console.log("  ✓ stripInternalIdentifiers scrubs bare UUIDs");
 
 // ---------------------------------------------------------------------------
 // 5. Test Cross-Branch Policy, Visit, and Opening Hours Knowledge
 // ---------------------------------------------------------------------------
-console.log("\n[Test 5] Testing Cross-Branch Policy, Opening Hours & Visit Knowledge...");
+console.log(
+  "\n[Test 5] Testing Cross-Branch Policy, Opening Hours & Visit Knowledge...",
+);
 
 // Primary branch = G-14 (mockBranches[1])
 // Customer asks: "Are trials allowed in your Karachi Company branch as well?"
@@ -238,8 +298,13 @@ const oppositePolicyKarachi = {
 };
 
 const oppositePolicyKnowledge = {
-  gym: { id: "gym-1", gym_name: "Iron Fitness", gym_description: "Premier Gym", email: "info@iron.com" },
-  branch: oppositePolicyG14,            // Primary = G-14 (trials allowed)
+  gym: {
+    id: "gym-1",
+    gym_name: "Iron Fitness",
+    gym_description: "Premier Gym",
+    email: "info@iron.com",
+  },
+  branch: oppositePolicyG14, // Primary = G-14 (trials allowed)
   isMultiBranch: true,
   allBranches: mockBranches,
   packages: [],
@@ -248,20 +313,23 @@ const oppositePolicyKnowledge = {
   media: [],
   crossBranchKnowledge: [
     {
-      branch: oppositePolicyKarachi,    // Cross-branch = Karachi Company (NO trials)
+      branch: oppositePolicyKarachi, // Cross-branch = Karachi Company (NO trials)
       packages: [],
       facilities: [],
       trainers: [],
     },
   ],
-  summary: "Loaded for text: gym, branch:Iron Fitness G-14, cross-branch:Iron Fitness Karachi Company.",
+  summary:
+    "Loaded for text: gym, branch:Iron Fitness G-14, cross-branch:Iron Fitness Karachi Company.",
 };
 
 const oppositeSummary = buildKnowledgeSummary(oppositePolicyKnowledge);
 
 // Primary branch (G-14) sections must be explicitly tagged "(PRIMARY BRANCH)"
 assert.ok(
-  oppositeSummary.content.includes("## Trial Policy — Iron Fitness G-14 (PRIMARY BRANCH)"),
+  oppositeSummary.content.includes(
+    "## Trial Policy — Iron Fitness G-14 (PRIMARY BRANCH)",
+  ),
   "Primary branch Trial Policy must be tagged (PRIMARY BRANCH)",
 );
 assert.ok(
@@ -271,15 +339,21 @@ assert.ok(
 
 // Cross-branch (Karachi Company) section must be scoped with branch name
 assert.ok(
-  oppositeSummary.content.includes("## Other Branch Information — Iron Fitness Karachi Company"),
+  oppositeSummary.content.includes(
+    "## Other Branch Information — Iron Fitness Karachi Company",
+  ),
   "Cross-branch section header must be present",
 );
 assert.ok(
-  oppositeSummary.content.includes("### Trial Policy (Iron Fitness Karachi Company): We do not offer trial sessions. Please register directly."),
+  oppositeSummary.content.includes(
+    "### Trial Policy (Iron Fitness Karachi Company): We do not offer trial sessions. Please register directly.",
+  ),
   "Karachi Company's NO-trial policy must appear under the cross-branch section",
 );
 assert.ok(
-  oppositeSummary.content.includes("### Visit Policy (Iron Fitness Karachi Company): You are welcome to visit and tour our facilities at any time."),
+  oppositeSummary.content.includes(
+    "### Visit Policy (Iron Fitness Karachi Company): You are welcome to visit and tour our facilities at any time.",
+  ),
   "Karachi Company's visit policy must appear under cross-branch section",
 );
 
@@ -288,8 +362,11 @@ assert.ok(
   !oppositeSummary.content.includes("## Trial Policy — Iron Fitness Karachi Company"),
   "Karachi Company trial policy must NOT appear under a (PRIMARY BRANCH) scoped header",
 );
-console.log("  ✓ Opposite-policy test: primary branch (G-14) trial policy is isolated from cross-branch (Karachi Company) trial policy");
-console.log("  ✓ LLM sees '## Trial Policy — G-14 (PRIMARY BRANCH)' and '### Trial Policy (Karachi Company)' as distinct, non-contaminating sections");
+console.log(
+  "  ✓ Opposite-policy test: primary branch (G-14) trial policy is isolated from cross-branch (Karachi Company) trial policy",
+);
+console.log(
+  "  ✓ LLM sees '## Trial Policy — G-14 (PRIMARY BRANCH)' and '### Trial Policy (Karachi Company)' as distinct, non-contaminating sections",
+);
 
 console.log("\n=== ALL TESTS PASSED SUCCESSFULLY ===");
-

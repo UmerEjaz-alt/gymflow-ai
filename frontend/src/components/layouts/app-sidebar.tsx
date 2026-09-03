@@ -8,12 +8,20 @@ import { cn } from "@/lib/utils";
 
 type AppSidebarProps = {
   collapsed: boolean;
+  gymLogoUrl?: string | null;
+  gymName?: string | null;
   mobileOpen: boolean;
   onNavigate: () => void;
 };
 
 /** Reusable primary navigation rail with App Router-aware active links. */
-export function AppSidebar({ collapsed, mobileOpen, onNavigate }: AppSidebarProps) {
+export function AppSidebar({
+  collapsed,
+  gymLogoUrl,
+  gymName,
+  mobileOpen,
+  onNavigate,
+}: AppSidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -26,11 +34,18 @@ export function AppSidebar({ collapsed, mobileOpen, onNavigate }: AppSidebarProp
       )}
     >
       <div className="mb-8 flex h-9 items-center gap-3 px-2">
-        <div className="bg-primary text-primary-foreground grid size-8 place-items-center rounded-lg text-sm font-bold">
+        <div className="bg-primary text-primary-foreground relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg text-sm font-bold">
           G
+          {gymLogoUrl ? (
+            <span
+              aria-hidden
+              className="absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: `url("${gymLogoUrl}")` }}
+            />
+          ) : null}
         </div>
         <span className={cn("font-semibold tracking-tight", collapsed && "lg:hidden")}>
-          GymFlow AI
+          {gymName ?? "Kroway"}
         </span>
       </div>
 

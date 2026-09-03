@@ -5,6 +5,7 @@ import {
   CalendarDays,
   ChartNoAxesCombined,
   Inbox,
+  Images,
   Settings,
   UserRoundCheck,
   UsersRound,
@@ -24,6 +25,7 @@ export const appNavigation: AppNavigationItem[] = [
   { href: "/bookings", icon: CalendarDays, label: "Bookings" },
   { href: "/automations", icon: Bot, label: "Automations" },
   { href: "/analytics", icon: ChartNoAxesCombined, label: "Analytics" },
-  { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
+  { href: "/knowledge", icon: BookOpen, label: "Offers & Promotions" },
+  { href: "/settings/media", icon: Images, label: "Media" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];

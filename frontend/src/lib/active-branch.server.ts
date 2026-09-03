@@ -83,5 +83,11 @@ export async function resolveActiveBranch(): Promise<ActiveBranchResult> {
 
   const branch = fromCookie ?? branches.find((b) => b.is_default) ?? branches[0]!;
 
-  return { gym: { id: gym.id, gym_name: gym.gym_name }, branch, branches, isUnassigned: false, error: null };
+  return {
+    gym: { id: gym.id, gym_name: gym.gym_name },
+    branch,
+    branches,
+    isUnassigned: false,
+    error: null,
+  };
 }
