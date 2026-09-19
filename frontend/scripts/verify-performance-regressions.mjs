@@ -88,6 +88,10 @@ assert.match(messageService, /order\("created_at", \{ ascending: false \}\)/);
 assert.match(messageService, /\.limit\(boundedLimit\)/);
 assert.match(manager, /listRecentMessages\([\s\S]*LATEST_MESSAGES_LIMIT/);
 assert.doesNotMatch(manager, /slice\(-LATEST_MESSAGES_LIMIT\)/);
+assert.match(
+  manager,
+  /Promise\.all\(\[\s*conversationUpdatePromise,\s*historyPromise,?\s*\]\)/,
+);
 
 assert.match(inbox, /listConversationsWithMessagePreview/);
 assert.match(
@@ -104,6 +108,16 @@ assert.doesNotMatch(leads, /\.map\(async[\s\S]*listMessages/);
 assert.doesNotMatch(members, /listMessages\(/);
 assert.match(branch, /cache\(resolveActiveBranchForRequest\)/);
 
+const knowledgeLayer = await readSource("src/services/knowledge-layer.server.ts");
+assert.match(
+  knowledgeLayer,
+  /const gymPromise =[\s\S]*const branchResolution = await branchResolutionPromise/,
+);
+assert.match(
+  knowledgeLayer,
+  /Promise\.all\(\[\s*pendingMediaPromise,\s*Promise\.all\(\[/,
+);
+
 for (const route of ["inbox", "leads", "bookings", "members"]) {
   const loading = await readSource(`src/app/(app)/${route}/loading.tsx`);
   assert.match(loading, /WorkspaceLoading/);
@@ -113,3 +127,4 @@ console.log("Dashboard preview batching and lazy-history checks passed.");
 console.log("Tenant, branch, and unassigned scope checks passed.");
 console.log("Database-limited latest-20 ordering checks passed.");
 console.log("Request memoization and route loading-boundary checks passed.");
+console.log("Inbound and knowledge critical-path concurrency checks passed.");

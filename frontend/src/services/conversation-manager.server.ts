@@ -181,23 +181,40 @@ export async function handleIncomingMessage(
   const latestCustomerMessage = messageResult.data!;
 
   // ── Step 4: Update conversation timestamp ────────────────────────────────
-  const conversationUpdateStartedAt = performance.now();
-  const updateResult = await updateConversation(conversation.id, {
-    last_message_at: now,
-  });
-  const conversationUpdateMs = elapsedMs(conversationUpdateStartedAt);
+  const conversationUpdatePromise = (async () => {
+    const startedAt = performance.now();
+    const result = await updateConversation(conversation.id, {
+      last_message_at: now,
+    });
+    return { result, elapsedMs: elapsedMs(startedAt) };
+  })();
+
+  // The message is already durable at this point. Updating the conversation
+  // summary and reading its recent history are independent operations, so they
+  // can share one network round trip without changing persistence ordering.
+  const historyPromise = (async () => {
+    const startedAt = performance.now();
+    const result = await listRecentMessages(
+      conversation.id,
+      LATEST_MESSAGES_LIMIT,
+    );
+    return { result, elapsedMs: elapsedMs(startedAt) };
+  })();
+
+  const [conversationUpdate, historyLoad] = await Promise.all([
+    conversationUpdatePromise,
+    historyPromise,
+  ]);
+  const updateResult = conversationUpdate.result;
+  const conversationUpdateMs = conversationUpdate.elapsedMs;
   if (updateResult.error) {
     return { data: null, error: `Conversation update failed: ${updateResult.error}` };
   }
   conversation = updateResult.data!;
 
   // ── Step 5: Load recent messages ─────────────────────────────────────────
-  const historyStartedAt = performance.now();
-  const messagesResult = await listRecentMessages(
-    conversation.id,
-    LATEST_MESSAGES_LIMIT,
-  );
-  const historyLoadMs = elapsedMs(historyStartedAt);
+  const messagesResult = historyLoad.result;
+  const historyLoadMs = historyLoad.elapsedMs;
   if (messagesResult.error) {
     return { data: null, error: `Message retrieval failed: ${messagesResult.error}` };
   }

@@ -874,12 +874,22 @@ export async function buildKnowledgeContext(
     : inferKnowledgeNeeds(customerText, ctx.latestMessages, offerRelevance);
 
   // ── Resolve branch ────────────────────────────────────────────────────────
-  const branchStartedAt = performance.now();
-  const { branch, allBranches, isMultiBranch } = await resolveBranch(
-    gymId,
-    ctx.conversation.branch_id ?? null,
-  );
-  const branchResolutionMs = elapsedMs(branchStartedAt);
+  const branchResolutionPromise = (async () => {
+    const startedAt = performance.now();
+    const result = await resolveBranch(
+      gymId,
+      ctx.conversation.branch_id ?? null,
+    );
+    return { result, elapsedMs: elapsedMs(startedAt) };
+  })();
+  const gymPromise = (async () => {
+    const startedAt = performance.now();
+    const result = strategy.needsGym ? await fetchGym(gymId) : null;
+    return { result, elapsedMs: elapsedMs(startedAt) };
+  })();
+  const branchResolution = await branchResolutionPromise;
+  const { branch, allBranches, isMultiBranch } = branchResolution.result;
+  const branchResolutionMs = branchResolution.elapsedMs;
 
   const branchId = branch?.id ?? null;
   const previousAiText = [...ctx.latestMessages]
@@ -891,11 +901,13 @@ export async function buildKnowledgeContext(
         message.message_type === "text",
     );
   const previous = parsePreviousTurnContext(previousAiText);
-  const pendingMediaStartedAt = performance.now();
-  const pendingMedia = ctx.automationInstruction
-    ? null
-    : await resolvePendingMedia(gymId, ctx.latestMessages, allBranches);
-  const pendingMediaMs = elapsedMs(pendingMediaStartedAt);
+  const pendingMediaPromise = (async () => {
+    const startedAt = performance.now();
+    const result = ctx.automationInstruction
+      ? null
+      : await resolvePendingMedia(gymId, ctx.latestMessages, allBranches);
+    return { result, elapsedMs: elapsedMs(startedAt) };
+  })();
 
   // ── Detect cross-branch references or branch selections in customer message ──
   // When primary branch is established (branchId != null), loads data for other branches being asked about.
@@ -972,6 +984,55 @@ export async function buildKnowledgeContext(
 
   // ── Parallel fetches ─────────────────────────────────────────────────────
   const dataQueriesStartedAt = performance.now();
+  const [pendingMediaResolution, dataResults] = await Promise.all([
+    pendingMediaPromise,
+    Promise.all([
+      gymPromise.then(({ result }) => result),
+      strategy.needsPackages && needs.packages && branchId
+        ? fetchActivePackages(gymId, branchId)
+        : Promise.resolve(null),
+      strategy.needsTrainers && needs.trainers && branchId
+        ? fetchActiveTrainers(gymId, branchId)
+        : Promise.resolve(null),
+      strategy.needsFacilities && needs.facilities && branchId
+        ? fetchActiveFacilities(gymId, branchId)
+        : Promise.resolve(null),
+      strategy.needsMedia && needs.media && branchId
+        ? fetchActiveMediaAssets(gymId, branchId)
+        : Promise.resolve(null),
+      // Fetch data for referenced cross-branches if any
+      referencedBranches.length > 0
+        ? Promise.all(
+            referencedBranches.map(async (rb) => {
+              const [pkgs, facs, trns, media] = await Promise.all([
+                needs.packages || needs.offers
+                  ? fetchActivePackages(gymId, rb.id)
+                  : Promise.resolve({ packages: [] }),
+                needs.facilities
+                  ? fetchActiveFacilities(gymId, rb.id)
+                  : Promise.resolve({ facilities: [] }),
+                needs.trainers
+                  ? fetchActiveTrainers(gymId, rb.id)
+                  : Promise.resolve({ trainers: [] }),
+                needs.media
+                  ? fetchActiveMediaAssets(gymId, rb.id)
+                  : Promise.resolve({ media: [] }),
+              ]);
+              return {
+                branch: rb,
+                packages: "packages" in pkgs ? (pkgs.packages ?? []) : [],
+                facilities: "facilities" in facs ? (facs.facilities ?? []) : [],
+                trainers: "trainers" in trns ? (trns.trainers ?? []) : [],
+                media: "media" in media ? (media.media ?? []) : [],
+                offers: [],
+              } as CrossBranchKnowledge;
+            }),
+          )
+        : Promise.resolve(null),
+    ]),
+  ]);
+  const pendingMedia = pendingMediaResolution.result;
+  const pendingMediaMs = pendingMediaResolution.elapsedMs;
   const [
     gymResult,
     packagesResult,
@@ -979,50 +1040,7 @@ export async function buildKnowledgeContext(
     facilitiesResult,
     mediaResult,
     crossBranchResults,
-  ] = await Promise.all([
-    strategy.needsGym ? fetchGym(gymId) : Promise.resolve(null),
-    strategy.needsPackages && needs.packages && branchId
-      ? fetchActivePackages(gymId, branchId)
-      : Promise.resolve(null),
-    strategy.needsTrainers && needs.trainers && branchId
-      ? fetchActiveTrainers(gymId, branchId)
-      : Promise.resolve(null),
-    strategy.needsFacilities && needs.facilities && branchId
-      ? fetchActiveFacilities(gymId, branchId)
-      : Promise.resolve(null),
-    strategy.needsMedia && needs.media && branchId
-      ? fetchActiveMediaAssets(gymId, branchId)
-      : Promise.resolve(null),
-    // Fetch data for referenced cross-branches if any
-    referencedBranches.length > 0
-      ? Promise.all(
-          referencedBranches.map(async (rb) => {
-            const [pkgs, facs, trns, media] = await Promise.all([
-              needs.packages || needs.offers
-                ? fetchActivePackages(gymId, rb.id)
-                : Promise.resolve({ packages: [] }),
-              needs.facilities
-                ? fetchActiveFacilities(gymId, rb.id)
-                : Promise.resolve({ facilities: [] }),
-              needs.trainers
-                ? fetchActiveTrainers(gymId, rb.id)
-                : Promise.resolve({ trainers: [] }),
-              needs.media
-                ? fetchActiveMediaAssets(gymId, rb.id)
-                : Promise.resolve({ media: [] }),
-            ]);
-            return {
-              branch: rb,
-              packages: "packages" in pkgs ? (pkgs.packages ?? []) : [],
-              facilities: "facilities" in facs ? (facs.facilities ?? []) : [],
-              trainers: "trainers" in trns ? (trns.trainers ?? []) : [],
-              media: "media" in media ? (media.media ?? []) : [],
-              offers: [],
-            } as CrossBranchKnowledge;
-          }),
-        )
-      : Promise.resolve(null),
-  ]);
+  ] = dataResults;
   const dataQueriesMs = elapsedMs(dataQueriesStartedAt);
 
   // ── Error surface ─────────────────────────────────────────────────────────
