@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { cache } from "react";
 import { getGym } from "@/services/gym.server";
 import { getBranches } from "@/services/branch.server";
 import type { Branch } from "@/types/branch";
@@ -11,7 +12,7 @@ export const UNASSIGNED_BRANCH_SENTINEL = "__unassigned__";
 
 type ActiveBranchResult =
   | {
-      gym: { id: string; gym_name: string };
+      gym: { id: string; gym_name: string; logo_url: string | null };
       branch: Branch;
       branches: Branch[];
       /** When true, the owner is viewing unassigned conversations (branch_id = null). */
@@ -19,7 +20,7 @@ type ActiveBranchResult =
       error: null;
     }
   | {
-      gym: { id: string; gym_name: string };
+      gym: { id: string; gym_name: string; logo_url: string | null };
       branch: null;
       branches: Branch[];
       /** Owner selected "Unassigned" view; show conversations with branch_id = null. */
@@ -36,7 +37,7 @@ type ActiveBranchResult =
  * Returns an error string when the gym profile does not exist yet.
  * Returns `isUnassigned: true` when the owner chose the "Unassigned" filter.
  */
-export async function resolveActiveBranch(): Promise<ActiveBranchResult> {
+async function resolveActiveBranchForRequest(): Promise<ActiveBranchResult> {
   const gymResult = await getGym();
   if (gymResult.error || !gymResult.data) {
     return {
@@ -68,7 +69,7 @@ export async function resolveActiveBranch(): Promise<ActiveBranchResult> {
   // Unassigned sentinel: owner wants to view unresolved shared-endpoint conversations
   if (cookieBranchId === UNASSIGNED_BRANCH_SENTINEL) {
     return {
-      gym: { id: gym.id, gym_name: gym.gym_name },
+      gym: { id: gym.id, gym_name: gym.gym_name, logo_url: gym.logo_url },
       branch: null,
       branches,
       isUnassigned: true,
@@ -84,10 +85,13 @@ export async function resolveActiveBranch(): Promise<ActiveBranchResult> {
   const branch = fromCookie ?? branches.find((b) => b.is_default) ?? branches[0]!;
 
   return {
-    gym: { id: gym.id, gym_name: gym.gym_name },
+    gym: { id: gym.id, gym_name: gym.gym_name, logo_url: gym.logo_url },
     branch,
     branches,
     isUnassigned: false,
     error: null,
   };
 }
+
+/** React cache is scoped to the current server render/request, never cross-request. */
+export const resolveActiveBranch = cache(resolveActiveBranchForRequest);

@@ -6,7 +6,7 @@ import {
 } from "@/features/conversation-simulator/components/conversation-simulator";
 import {
   createConversation,
-  listConversations,
+  listConversationsWithMessagePreview,
   getConversation,
 } from "@/services/conversation.server";
 import { processIncomingConversationTurn } from "@/services/conversation-turn.server";
@@ -16,6 +16,8 @@ import { resolveActiveBranch } from "@/lib/active-branch.server";
 import { getWhatsAppEndpoints } from "@/services/whatsapp-endpoint.server";
 import type { Branch } from "@/types/branch";
 import type { WhatsAppEndpoint } from "@/types/whatsapp-endpoint";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { getActiveScopeConversationHistory } from "@/services/conversation-history.server";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,8 @@ async function loadSimulatorData(): Promise<{
   branches: Branch[];
   error?: string;
 }> {
+  const totalStartedAt = performance.now();
+  const branchStartedAt = performance.now();
   const resolved = await resolveActiveBranch();
   if (resolved.error || !resolved.gym)
     return {
@@ -37,28 +41,45 @@ async function loadSimulatorData(): Promise<{
       branches: [],
       error: resolved.error ?? "Create your gym profile before opening the inbox.",
     };
+  const branchMs = elapsedMs(branchStartedAt);
 
   const gym = resolved.gym;
 
   const branches = resolved.branches;
-  const endpointsResult = await getWhatsAppEndpoints(gym.id);
+  const dataStartedAt = performance.now();
+  const conversationScope = resolved.isUnassigned ? "unassigned" : resolved.branch.id;
+  const [endpointsResult, conversationsResult] = await Promise.all([
+    getWhatsAppEndpoints(gym.id),
+    listConversationsWithMessagePreview(gym.id, undefined, conversationScope),
+  ]);
+  const dataMs = elapsedMs(dataStartedAt);
   const activeEndpoints = (endpointsResult.data ?? []).filter((ep) => ep.is_active);
 
-  const conversationScope = resolved.isUnassigned ? "unassigned" : resolved.branch.id;
-  const conversationsResult = await listConversations(
-    gym.id,
-    undefined,
-    conversationScope,
-  );
+  const messagesStartedAt = performance.now();
+  const conversations = [...(conversationsResult.data ?? [])];
+  if (conversations[0]) {
+    const messages = await listMessages(conversations[0].id);
+    conversations[0] = { ...conversations[0], messages: messages.data ?? [] };
+  }
+  const messagesMs = elapsedMs(messagesStartedAt);
 
-  const conversations = await Promise.all(
-    (conversationsResult.data ?? []).map(async (conversation) => {
-      const messages = await listMessages(conversation.id);
-      return { ...conversation, messages: messages.data ?? [] };
-    }),
-  );
+  logPerformance("dashboard.inbox.load", {
+    branch_resolution_ms: branchMs,
+    data_queries_ms: dataMs,
+    messages_ms: messagesMs,
+    conversation_count: conversations.length,
+    initial_history_count: conversations[0]?.messages.length ?? 0,
+    preview_count: conversations.slice(1).filter((item) => item.messages.length > 0)
+      .length,
+    total_ms: elapsedMs(totalStartedAt),
+  });
 
   return { conversations, activeEndpoints, branches };
+}
+
+async function loadConversationHistory(conversationId: string) {
+  "use server";
+  return getActiveScopeConversationHistory(conversationId);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +196,7 @@ export default async function InboxPage() {
         activeEndpoints={activeEndpoints}
         branches={branches}
         onCreateCustomer={createSimulatedCustomer}
+        onLoadMessages={loadConversationHistory}
         onSendMessage={sendSimulatorMessage}
       />
     </div>

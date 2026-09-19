@@ -5,8 +5,11 @@ import type {
   UpdateConversationPayload,
 } from "@/types/conversation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { Message } from "@/types/message";
+import { normalizeConversationMessagePreviews } from "@/lib/conversation-message-query";
 
 type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
+export type ConversationWithMessagePreview = Conversation & { messages: Message[] };
 
 /**
  * Returns a single conversation by its id.
@@ -126,6 +129,39 @@ export async function listConversations(
   }
 
   return { data: data as Conversation[], error: null };
+}
+
+/**
+ * Returns branch-scoped conversations with at most their newest message.
+ * PostgREST applies the embedded limit per conversation, avoiding both a
+ * message N+1 and eager retrieval of complete histories.
+ */
+export async function listConversationsWithMessagePreview(
+  gymId: string,
+  source?: ConversationSource,
+  branchId?: string,
+): Promise<ServiceResult<ConversationWithMessagePreview[]>> {
+  const supabase = await createServerSupabaseClient();
+  let query = supabase
+    .from("conversations")
+    .select("*, messages(*)")
+    .eq("gym_id", gymId)
+    .order("last_message_at", { ascending: false })
+    .order("created_at", { referencedTable: "messages", ascending: false })
+    .limit(1, { referencedTable: "messages" });
+
+  if (source) query = query.eq("source", source);
+  if (branchId === "unassigned") query = query.is("branch_id", null);
+  else if (branchId) query = query.eq("branch_id", branchId);
+
+  const { data, error } = await query;
+  if (error) return { data: null, error: error.message };
+  return {
+    data: normalizeConversationMessagePreviews(
+      (data ?? []) as ConversationWithMessagePreview[],
+    ),
+    error: null,
+  };
 }
 
 /**

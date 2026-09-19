@@ -22,6 +22,7 @@ import type { Branch } from "@/types/branch";
 import type { Conversation } from "@/types/conversation";
 import type { Message } from "@/types/message";
 import type { WhatsAppEndpoint } from "@/types/whatsapp-endpoint";
+import { replaceConversationMessages } from "@/lib/conversation-message-query";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,6 +41,9 @@ type Props = {
     phone: string,
     endpointId: string | null,
   ) => Promise<{ conversationId?: string; error?: string }>;
+  onLoadMessages: (
+    conversationId: string,
+  ) => Promise<{ data: Message[] | null; error: string | null }>;
   onSendMessage: (
     conversationId: string,
     content: string,
@@ -105,6 +109,7 @@ export function ConversationSimulator({
   activeEndpoints,
   branches,
   onCreateCustomer,
+  onLoadMessages,
   onSendMessage,
 }: Props) {
   const [conversations, setConversations] = useState(initialConversations);
@@ -118,7 +123,11 @@ export function ConversationSimulator({
     activeEndpoints[0]?.id ?? "",
   );
   const [error, setError] = useState(initialError ?? "");
+  const [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const loadedConversationIds = useRef(
+    new Set(initialConversations[0] ? [initialConversations[0].id] : []),
+  );
 
   const selected = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedId) ?? null,
@@ -186,6 +195,7 @@ export function ConversationSimulator({
     };
 
     setConversations((current) => [customer, ...current]);
+    loadedConversationIds.current.add(customer.id);
     setSelectedId(customer.id);
     setName("");
     setPhone("");
@@ -234,6 +244,24 @@ export function ConversationSimulator({
     setIsCreateOpen(true);
   }
 
+  async function selectConversation(conversation: SimulatorConversation) {
+    setSelectedId(conversation.id);
+    if (loadedConversationIds.current.has(conversation.id)) return;
+
+    setError("");
+    setLoadingHistoryId(conversation.id);
+    const result = await onLoadMessages(conversation.id);
+    if (result.error || !result.data) {
+      setError(result.error ?? "Could not load this conversation.");
+    } else {
+      loadedConversationIds.current.add(conversation.id);
+      setConversations((current) =>
+        replaceConversationMessages(current, conversation.id, result.data!),
+      );
+    }
+    setLoadingHistoryId((current) => (current === conversation.id ? null : current));
+  }
+
   // Current conversation endpoint info
   const selectedEp = selected?.whatsapp_endpoint_id
     ? endpointById.get(selected.whatsapp_endpoint_id)
@@ -276,7 +304,7 @@ export function ConversationSimulator({
                 <button
                   key={conversation.id}
                   type="button"
-                  onClick={() => setSelectedId(conversation.id)}
+                  onClick={() => void selectConversation(conversation)}
                   className={cn(
                     "hover:bg-accent flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
                     selectedId === conversation.id && "bg-accent",
@@ -370,7 +398,18 @@ export function ConversationSimulator({
               ref={scrollRef}
               className="flex-1 space-y-3 overflow-y-auto px-4 py-5 sm:px-6"
             >
-              {!selected.messages.length ? (
+              {loadingHistoryId === selected.id ? (
+                <div
+                  className="mx-auto mt-16 w-full max-w-sm space-y-3"
+                  aria-live="polite"
+                >
+                  <div className="bg-card h-12 w-4/5 animate-pulse rounded-xl" />
+                  <div className="bg-card ml-auto h-12 w-3/5 animate-pulse rounded-xl" />
+                  <p className="text-muted-foreground text-center text-xs">
+                    Loading conversation…
+                  </p>
+                </div>
+              ) : !selected.messages.length ? (
                 <div className="text-muted-foreground bg-card mx-auto mt-16 max-w-sm rounded-xl px-5 py-4 text-center text-sm shadow-sm">
                   {selected.branch_id === null ? (
                     <>
@@ -400,9 +439,11 @@ export function ConversationSimulator({
                 </div>
               ) : null}
 
-              {selected.messages.map((item) => (
-                <ChatMessage item={item} key={item.id} />
-              ))}
+              {loadingHistoryId !== selected.id
+                ? selected.messages.map((item) => (
+                    <ChatMessage item={item} key={item.id} />
+                  ))
+                : null}
 
               {isSending ? (
                 <div className="bg-card flex w-fit items-center gap-2 rounded-2xl rounded-bl-md px-4 py-3 text-sm shadow-sm">

@@ -4,6 +4,7 @@ import type {
   UpdateMessagePayload,
 } from "@/types/message";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { newestFirstToChronological } from "@/lib/message-order";
 
 type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
 
@@ -41,6 +42,30 @@ export async function listMessages(
   }
 
   return { data: data as Message[], error: null };
+}
+
+/**
+ * Returns only the newest bounded set of messages, restored to chronological
+ * order for the authoritative AI context.
+ */
+export async function listRecentMessages(
+  conversationId: string,
+  limit: number,
+): Promise<ServiceResult<Message[]>> {
+  const supabase = await createServerSupabaseClient();
+  const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+  const { data, error } = await supabase
+    .from("messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(boundedLimit);
+
+  if (error) return { data: null, error: error.message };
+  return {
+    data: newestFirstToChronological((data ?? []) as Message[]),
+    error: null,
+  };
 }
 
 /**

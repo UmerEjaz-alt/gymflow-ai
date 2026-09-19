@@ -27,6 +27,7 @@ import { getFacilities } from "@/services/facility.server";
 import { getMediaAssets } from "@/services/media-asset.server";
 import { getActiveOffers } from "@/services/offer.server";
 import { hasJoiningSalesCue } from "@/lib/joining-intent-cues";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -852,6 +853,7 @@ function branchMatchesText(
 export async function buildKnowledgeContext(
   ctx: ConversationContext,
 ): Promise<KnowledgeResult> {
+  const totalStartedAt = performance.now();
   const gymId = ctx.conversation.gym_id;
   const messageType = ctx.latestCustomerMessage.message_type;
   const customerText = ctx.latestCustomerMessage.content;
@@ -872,10 +874,12 @@ export async function buildKnowledgeContext(
     : inferKnowledgeNeeds(customerText, ctx.latestMessages, offerRelevance);
 
   // ── Resolve branch ────────────────────────────────────────────────────────
+  const branchStartedAt = performance.now();
   const { branch, allBranches, isMultiBranch } = await resolveBranch(
     gymId,
     ctx.conversation.branch_id ?? null,
   );
+  const branchResolutionMs = elapsedMs(branchStartedAt);
 
   const branchId = branch?.id ?? null;
   const previousAiText = [...ctx.latestMessages]
@@ -887,9 +891,11 @@ export async function buildKnowledgeContext(
         message.message_type === "text",
     );
   const previous = parsePreviousTurnContext(previousAiText);
+  const pendingMediaStartedAt = performance.now();
   const pendingMedia = ctx.automationInstruction
     ? null
     : await resolvePendingMedia(gymId, ctx.latestMessages, allBranches);
+  const pendingMediaMs = elapsedMs(pendingMediaStartedAt);
 
   // ── Detect cross-branch references or branch selections in customer message ──
   // When primary branch is established (branchId != null), loads data for other branches being asked about.
@@ -965,6 +971,7 @@ export async function buildKnowledgeContext(
   }
 
   // ── Parallel fetches ─────────────────────────────────────────────────────
+  const dataQueriesStartedAt = performance.now();
   const [
     gymResult,
     packagesResult,
@@ -1016,6 +1023,7 @@ export async function buildKnowledgeContext(
         )
       : Promise.resolve(null),
   ]);
+  const dataQueriesMs = elapsedMs(dataQueriesStartedAt);
 
   // ── Error surface ─────────────────────────────────────────────────────────
   if (gymResult && "error" in gymResult)
@@ -1036,6 +1044,7 @@ export async function buildKnowledgeContext(
   const facilities = facilitiesResult ? facilitiesResult.facilities : null;
   const media = mediaResult ? mediaResult.media : null;
   const primaryPackages = packages ?? [];
+  const offersStartedAt = performance.now();
   const primaryOffersResult =
     needs.offers && branch?.timezone
       ? await getActiveOffers(
@@ -1073,6 +1082,7 @@ export async function buildKnowledgeContext(
         }),
       )
     : null;
+  const offersMs = elapsedMs(offersStartedAt);
 
   const effectiveBranchId =
     referencedBranches.length === 1 ? referencedBranches[0]!.id : branchId;
@@ -1142,6 +1152,22 @@ export async function buildKnowledgeContext(
     loaded.length > 0
       ? `Loaded for "${messageType}": ${loaded.join(", ")}.${isMultiBranch && !branch ? " [no branch established — AI should ask]" : ""}`
       : `No data loaded for "${messageType}".`;
+
+  logPerformance("ai.knowledge_load", {
+    message_type: messageType,
+    branch_resolution_ms: branchResolutionMs,
+    pending_media_ms: pendingMediaMs,
+    data_queries_ms: dataQueriesMs,
+    offers_ms: offersMs,
+    branch_count: allBranches.length,
+    package_count: packages?.length ?? 0,
+    trainer_count: trainers?.length ?? 0,
+    facility_count: facilities?.length ?? 0,
+    media_count: media?.length ?? 0,
+    offer_count: offers?.length ?? 0,
+    cross_branch_count: crossBranchKnowledge?.length ?? 0,
+    total_ms: elapsedMs(totalStartedAt),
+  });
 
   return {
     data: {

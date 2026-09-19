@@ -7,8 +7,13 @@ import {
   type MemberImportInput,
 } from "@/services/membership.server";
 import { getMembershipPackages } from "@/services/membership-package.server";
-import { listMessages } from "@/services/message.server";
 import { resolveActiveBranch } from "@/lib/active-branch.server";
+import {
+  elapsedMs,
+  logPerformance,
+  startPerformanceTimer,
+} from "@/lib/performance-log.server";
+import { getActiveScopeConversationHistory } from "@/services/conversation-history.server";
 
 export const dynamic = "force-dynamic";
 
@@ -21,25 +26,40 @@ async function importMembersAction(rows: MemberImportInput[]) {
   return importMembersToBranch(resolved.gym.id, resolved.branch, rows);
 }
 
+async function loadConversationHistory(conversationId: string) {
+  "use server";
+  return getActiveScopeConversationHistory(conversationId);
+}
+
 export default async function MembersPage() {
+  const totalStartedAt = startPerformanceTimer();
+  const branchStartedAt = startPerformanceTimer();
   const resolved = await resolveActiveBranch();
   if (resolved.error || !resolved.gym || !resolved.branch)
     return (
       <Error message={resolved.error ?? "Create a branch before viewing members."} />
     );
+  const branchMs = elapsedMs(branchStartedAt);
+  const dataStartedAt = startPerformanceTimer();
   const [memberships, packages] = await Promise.all([
     getMemberships(resolved.gym.id, resolved.branch.id),
     getMembershipPackages(resolved.gym.id, resolved.branch.id),
   ]);
+  const dataMs = elapsedMs(dataStartedAt);
   if (memberships.error) return <Error message={memberships.error} />;
-  const members = await Promise.all(
-    getLatestMemberships(memberships.data!).map(async (membership) => ({
-      ...membership,
-      messages: membership.conversation
-        ? ((await listMessages(membership.conversation.id)).data ?? [])
-        : [],
-    })),
-  );
+  const members = getLatestMemberships(memberships.data!).map((membership) => ({
+    ...membership,
+    messages: [],
+  }));
+  logPerformance("dashboard.members.load", {
+    branch_resolution_ms: branchMs,
+    data_queries_ms: dataMs,
+    messages_ms: 0,
+    membership_count: memberships.data?.length ?? 0,
+    member_count: members.length,
+    message_count: members.reduce((count, member) => count + member.messages.length, 0),
+    total_ms: elapsedMs(totalStartedAt),
+  });
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="mb-8 flex items-center gap-3">
@@ -59,6 +79,7 @@ export default async function MembersPage() {
         packages={(packages.data ?? []).filter((item) => item.active)}
         countryCode={resolved.branch.country_code}
         onImport={importMembersAction}
+        onLoadMessages={loadConversationHistory}
       />
     </div>
   );

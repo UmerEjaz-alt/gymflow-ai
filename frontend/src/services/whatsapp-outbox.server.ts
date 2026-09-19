@@ -8,6 +8,7 @@ import {
 } from "@/services/whatsapp-cloud-api.server";
 import type { Message } from "@/types/message";
 import { failureDeliveryPatch } from "@/services/whatsapp-delivery-policy";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 type DeliveryRow = {
   id: string;
@@ -29,6 +30,7 @@ export async function prepareWhatsAppDelivery(
   messageId: string,
   phoneNumberId: string,
 ): Promise<void> {
+  const startedAt = performance.now();
   const supabase = await createServerSupabaseClient();
   await supabase
     .from("whatsapp_outbound_deliveries")
@@ -43,6 +45,9 @@ export async function prepareWhatsAppDelivery(
     .eq("message_id", messageId)
     .is("phone_number_id", null)
     .is("whatsapp_endpoint_id", null);
+  logPerformance("whatsapp.delivery_prepare", {
+    total_ms: elapsedMs(startedAt),
+  });
 }
 
 async function claimDelivery(input: {
@@ -150,7 +155,13 @@ async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
   // `processing` work is safe to reclaim; expired `sending` work is quarantined
   // as uncertain because Meta may already have accepted it.
   if (!(await beginDeliverySend(delivery))) return "deferred";
+  const metaSendStartedAt = performance.now();
   const result = await send();
+  logPerformance("whatsapp.meta_send", {
+    message_type: message.message_type,
+    accepted: Boolean(result.data),
+    delivery_ms: elapsedMs(metaSendStartedAt),
+  });
 
   if (!result.data) {
     const failure = failureDeliveryPatch(result, delivery.attempt_count);
@@ -200,8 +211,17 @@ async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
 export async function deliverWhatsAppMessage(
   messageId: string,
 ): Promise<DeliveryOutcome> {
+  const totalStartedAt = performance.now();
+  const claimStartedAt = performance.now();
   const claim = await claimDelivery({ messageId });
-  return claim ? deliverClaim(claim) : "deferred";
+  const claimMs = elapsedMs(claimStartedAt);
+  const outcome = claim ? await deliverClaim(claim) : "deferred";
+  logPerformance("whatsapp.delivery", {
+    claim_ms: claimMs,
+    outcome,
+    total_ms: elapsedMs(totalStartedAt),
+  });
+  return outcome;
 }
 
 export async function recoverWhatsAppDeliveries(

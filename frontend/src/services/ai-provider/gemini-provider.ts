@@ -7,6 +7,7 @@
  */
 
 import type { AIProvider, AIResponse, PromptPayload } from "./types";
+import { logPerformance } from "@/lib/performance-log.server";
 import type { StructuredAIOutput } from "@/types/understanding";
 
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
@@ -307,19 +308,21 @@ export class GeminiProvider implements AIProvider {
 
   async generateResponse(payload: PromptPayload): Promise<AIResponse> {
     const request = buildGeminiRequest(payload);
+    const promptParts = [
+      ...request.systemInstruction.parts,
+      ...request.contents.flatMap((content) => content.parts),
+    ];
+    const estimatedInputTokens = promptParts.reduce(
+      (total, part) => total + estimateTokens(part.text),
+      0,
+    );
+    const messageCount = request.contents.length + request.systemInstruction.parts.length;
 
     if (process.env.NODE_ENV === "development") {
-      const promptParts = [
-        ...request.systemInstruction.parts,
-        ...request.contents.flatMap((content) => content.parts),
-      ];
       console.debug("[Gemini prompt diagnostics]", {
-        estimatedInputTokens: promptParts.reduce(
-          (total, part) => total + estimateTokens(part.text),
-          0,
-        ),
+        estimatedInputTokens,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
-        messageCount: request.contents.length + request.systemInstruction.parts.length,
+        messageCount,
       });
     }
 
@@ -346,6 +349,14 @@ export class GeminiProvider implements AIProvider {
     }
 
     const parsed = tryParseStructuredOutput(rawText);
+    logPerformance("ai.provider_request", {
+      provider: "gemini",
+      estimated_input_tokens: estimatedInputTokens,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
+      message_count: messageCount,
+      output_characters: rawText.length,
+      finish_reason: candidate?.finishReason ?? "unknown",
+    });
     return {
       rawText,
       output: parsed.data,

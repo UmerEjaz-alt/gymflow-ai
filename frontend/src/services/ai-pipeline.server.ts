@@ -21,6 +21,7 @@ import {
 import { buildPrompt } from "@/services/prompt-builder.server";
 import { createAIProvider } from "@/services/ai-provider";
 import { validateAIResponse } from "@/services/response-validator.server";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,9 +66,12 @@ export type PipelineResult = {
 export async function generateValidatedReply(
   context: ConversationContext,
 ): Promise<PipelineResult> {
+  const totalStartedAt = performance.now();
   // ── Step 1: Orchestrate ───────────────────────────────────────────────────
 
+  const orchestrationStartedAt = performance.now();
   const orchestration = await processConversation(context);
+  const orchestrationMs = elapsedMs(orchestrationStartedAt);
   const { action, knowledge } = orchestration;
 
   // Short-circuit actions — no AI generation needed
@@ -76,6 +80,16 @@ export async function generateValidatedReply(
     action === "no_reply" ||
     action === "knowledge_unavailable"
   ) {
+    logPerformance("ai.pipeline", {
+      action,
+      message_type: context.latestCustomerMessage.message_type,
+      history_count: context.latestMessages.length,
+      orchestration_ms: orchestrationMs,
+      prompt_build_ms: 0,
+      provider_ms: 0,
+      validation_ms: 0,
+      total_ms: elapsedMs(totalStartedAt),
+    });
     return {
       action,
       validatedResponse: null,
@@ -87,16 +101,50 @@ export async function generateValidatedReply(
   // ── Step 2: Build prompt ──────────────────────────────────────────────────
 
   // knowledge is guaranteed non-null when action === "knowledge_ready"
+  const promptStartedAt = performance.now();
   const prompt = buildPrompt(context, knowledge!);
+  const promptBuildMs = elapsedMs(promptStartedAt);
 
   // ── Step 3 & 4: Generate AI response ─────────────────────────────────────
 
   const provider = createAIProvider();
-  const aiResponse = await provider.generateResponse(prompt);
+  const providerStartedAt = performance.now();
+  let aiResponse: AIResponse;
+  try {
+    aiResponse = await provider.generateResponse(prompt);
+  } catch (error) {
+    logPerformance("ai.pipeline", {
+      action,
+      outcome: "provider_error",
+      message_type: context.latestCustomerMessage.message_type,
+      history_count: context.latestMessages.length,
+      orchestration_ms: orchestrationMs,
+      prompt_build_ms: promptBuildMs,
+      provider_ms: elapsedMs(providerStartedAt),
+      validation_ms: 0,
+      total_ms: elapsedMs(totalStartedAt),
+    });
+    throw error;
+  }
+  const providerMs = elapsedMs(providerStartedAt);
 
   // ── Step 5: Validate ──────────────────────────────────────────────────────
 
+  const validationStartedAt = performance.now();
   const validatedResponse = validateAIResponse(aiResponse);
+  const validationMs = elapsedMs(validationStartedAt);
+
+  logPerformance("ai.pipeline", {
+    action,
+    outcome: validatedResponse.approved ? "approved" : "rejected",
+    message_type: context.latestCustomerMessage.message_type,
+    history_count: context.latestMessages.length,
+    orchestration_ms: orchestrationMs,
+    prompt_build_ms: promptBuildMs,
+    provider_ms: providerMs,
+    validation_ms: validationMs,
+    total_ms: elapsedMs(totalStartedAt),
+  });
 
   return {
     action,

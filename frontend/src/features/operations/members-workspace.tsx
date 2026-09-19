@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -25,6 +25,7 @@ export function MembersWorkspace({
   packages: importPackages,
   countryCode,
   onImport,
+  onLoadMessages,
 }: {
   initialMembers: Member[];
   packages: MembershipPackage[];
@@ -32,10 +33,16 @@ export function MembersWorkspace({
   onImport: (
     rows: MemberImportInput[],
   ) => Promise<{ data: MemberImportResult | null; error: string | null }>;
+  onLoadMessages: (
+    conversationId: string,
+  ) => Promise<{ data: Message[] | null; error: string | null }>;
 }) {
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
-    [selected, setSelected] = useState<Member | null>(null);
+    [selected, setSelected] = useState<Member | null>(null),
+    [loadingConversationId, setLoadingConversationId] = useState<string | null>(null),
+    [historyError, setHistoryError] = useState("");
+  const historyByConversationId = useRef(new Map<string, Message[]>());
   const packageNames = [
     ...new Set(
       initialMembers
@@ -59,8 +66,42 @@ export function MembersWorkspace({
         ),
     [initialMembers, query, filter],
   );
+  async function selectMember(member: Member) {
+    const conversationId = member.conversation?.id;
+    setHistoryError("");
+    if (!conversationId) {
+      setSelected(member);
+      return;
+    }
+    const cached = historyByConversationId.current.get(conversationId);
+    if (cached) {
+      setSelected({ ...member, messages: cached });
+      return;
+    }
+    setSelected(member);
+    setLoadingConversationId(conversationId);
+    const result = await onLoadMessages(conversationId);
+    if (result.error || !result.data) {
+      setHistoryError(result.error ?? "Could not load this customer history.");
+    } else {
+      historyByConversationId.current.set(conversationId, result.data);
+      setSelected((current) =>
+        current?.conversation?.id === conversationId
+          ? { ...current, messages: result.data! }
+          : current,
+      );
+    }
+    setLoadingConversationId((current) =>
+      current === conversationId ? null : current,
+    );
+  }
   return (
     <div className="border-border bg-card overflow-hidden rounded-xl border">
+      {historyError ? (
+        <p className="m-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {historyError}
+        </p>
+      ) : null}
       <div className="border-border flex flex-wrap gap-3 border-b p-4">
         <div className="flex min-w-56 flex-1 items-center gap-2">
           <Search className="text-muted-foreground size-4" />
@@ -95,7 +136,7 @@ export function MembersWorkspace({
             <button
               className="hover:bg-accent flex w-full justify-between gap-4 p-4 text-left"
               key={member.id}
-              onClick={() => setSelected(member)}
+              onClick={() => void selectMember(member)}
             >
               <span>
                 <strong className="block text-sm">
@@ -149,11 +190,21 @@ export function MembersWorkspace({
                 Customer history
               </p>
               <div className="mt-2 max-h-64 space-y-2 overflow-y-auto">
-                {selected.messages.map((message) => (
-                  <p className="bg-muted rounded-lg p-2 text-sm" key={message.id}>
-                    {message.content}
-                  </p>
-                ))}
+                {loadingConversationId === selected.conversation?.id ? (
+                  <div className="space-y-2" aria-live="polite">
+                    <div className="bg-muted h-10 animate-pulse rounded-lg" />
+                    <div className="bg-muted h-10 w-4/5 animate-pulse rounded-lg" />
+                    <p className="text-muted-foreground text-xs">
+                      Loading customer history…
+                    </p>
+                  </div>
+                ) : (
+                  selected.messages.map((message) => (
+                    <p className="bg-muted rounded-lg p-2 text-sm" key={message.id}>
+                      {message.content}
+                    </p>
+                  ))
+                )}
               </div>
             </>
           ) : (

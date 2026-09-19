@@ -103,6 +103,7 @@ export async function transcribeWhatsAppVoiceNote(input: {
       model: payload?.model ?? GEMINI_TRANSCRIPTION_MODEL,
       inputMimeType: input.mimeType,
       inputBytes: input.bytes.byteLength,
+      providerMs: Date.now() - startedAt,
     });
     return {
       data: {

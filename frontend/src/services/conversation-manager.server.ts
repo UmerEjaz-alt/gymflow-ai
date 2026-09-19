@@ -11,7 +11,8 @@ import {
   getConversationByPhone,
   updateConversation,
 } from "@/services/conversation.server";
-import { createMessage, listMessages } from "@/services/message.server";
+import { createMessage, listRecentMessages } from "@/services/message.server";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -91,6 +92,7 @@ const LATEST_MESSAGES_LIMIT = 20;
 export async function handleIncomingMessage(
   event: IncomingMessageEvent,
 ): Promise<{ data: ConversationContext; error: null } | { data: null; error: string }> {
+  const totalStartedAt = performance.now();
   const {
     gymId,
     endpointId,
@@ -106,21 +108,25 @@ export async function handleIncomingMessage(
   const now = new Date().toISOString();
 
   // ── Step 1: Resolve or create the conversation ───────────────────────────
+  const lookupStartedAt = performance.now();
   const lookupResult = await getConversationByPhone(
     gymId,
     customerPhone,
     endpointId,
     branchId,
   );
+  const lookupMs = elapsedMs(lookupStartedAt);
   if (lookupResult.error) {
     return { data: null, error: `Conversation lookup failed: ${lookupResult.error}` };
   }
 
   let conversation: Conversation;
+  let conversationCreateMs = 0;
 
   if (lookupResult.data) {
     conversation = lookupResult.data;
   } else {
+    const createStartedAt = performance.now();
     const createResult = await createConversation({
       gym_id: gymId,
       branch_id: branchId ?? null,
@@ -130,6 +136,7 @@ export async function handleIncomingMessage(
       source,
       last_message_at: now,
     });
+    conversationCreateMs = elapsedMs(createStartedAt);
     if (createResult.error) {
       return {
         data: null,
@@ -148,14 +155,17 @@ export async function handleIncomingMessage(
     updates.whatsapp_endpoint_id = endpointId;
   }
 
+  const routeStampStartedAt = performance.now();
   if (Object.keys(updates).length > 0) {
     const branchUpdate = await updateConversation(conversation.id, updates);
     if (!branchUpdate.error && branchUpdate.data) {
       conversation = branchUpdate.data;
     }
   }
+  const routeStampMs = elapsedMs(routeStampStartedAt);
 
   // ── Step 3: Persist the customer message ─────────────────────────────────
+  const messagePersistenceStartedAt = performance.now();
   const messageResult = await createMessage({
     conversation_id: conversation.id,
     sender_type: "customer",
@@ -164,26 +174,48 @@ export async function handleIncomingMessage(
     content,
     metadata: metadata ?? {},
   });
+  const messagePersistenceMs = elapsedMs(messagePersistenceStartedAt);
   if (messageResult.error) {
     return { data: null, error: `Message persistence failed: ${messageResult.error}` };
   }
   const latestCustomerMessage = messageResult.data!;
 
   // ── Step 4: Update conversation timestamp ────────────────────────────────
+  const conversationUpdateStartedAt = performance.now();
   const updateResult = await updateConversation(conversation.id, {
     last_message_at: now,
   });
+  const conversationUpdateMs = elapsedMs(conversationUpdateStartedAt);
   if (updateResult.error) {
     return { data: null, error: `Conversation update failed: ${updateResult.error}` };
   }
   conversation = updateResult.data!;
 
   // ── Step 5: Load recent messages ─────────────────────────────────────────
-  const messagesResult = await listMessages(conversation.id);
+  const historyStartedAt = performance.now();
+  const messagesResult = await listRecentMessages(
+    conversation.id,
+    LATEST_MESSAGES_LIMIT,
+  );
+  const historyLoadMs = elapsedMs(historyStartedAt);
   if (messagesResult.error) {
     return { data: null, error: `Message retrieval failed: ${messagesResult.error}` };
   }
-  const latestMessages = messagesResult.data!.slice(-LATEST_MESSAGES_LIMIT);
+  const latestMessages = messagesResult.data!;
+
+  logPerformance("whatsapp.conversation_load", {
+    source,
+    message_type: messageType,
+    conversation_lookup_ms: lookupMs,
+    conversation_create_ms: conversationCreateMs,
+    route_stamp_ms: routeStampMs,
+    inbound_persistence_ms: messagePersistenceMs,
+    conversation_update_ms: conversationUpdateMs,
+    history_load_ms: historyLoadMs,
+    history_rows_loaded: latestMessages.length,
+    history_rows_used: latestMessages.length,
+    total_ms: elapsedMs(totalStartedAt),
+  });
 
   // ── Step 6: Assemble context ──────────────────────────────────────────────
   return {
@@ -191,7 +223,9 @@ export async function handleIncomingMessage(
       conversation,
       latestMessages,
       shouldCallAI:
-        !event.suppressAI && conversation.ai_enabled && conversation.status === "active",
+        !event.suppressAI &&
+        conversation.ai_enabled &&
+        conversation.status === "active",
       humanTakeover: conversation.status === "human",
       leadStage: conversation.lead_stage,
       status: conversation.status,
@@ -224,7 +258,10 @@ export async function buildAutomationConversationContext(input: {
   if (conversationResult.error || !conversationResult.data)
     return { data: null, error: conversationResult.error ?? "Conversation not found." };
 
-  const messagesResult = await listMessages(input.conversationId);
+  const messagesResult = await listRecentMessages(
+    input.conversationId,
+    LATEST_MESSAGES_LIMIT,
+  );
   if (messagesResult.error) return { data: null, error: messagesResult.error };
 
   const conversation = conversationResult.data;
@@ -245,7 +282,7 @@ export async function buildAutomationConversationContext(input: {
   return {
     data: {
       conversation,
-      latestMessages: messagesResult.data!.slice(-LATEST_MESSAGES_LIMIT),
+      latestMessages: messagesResult.data!,
       // Automation turns bypass the per-conversation ai_enabled flag — the
       // automation config's own enabled flag is the opt-in. The orchestrator
       // enforces this separately.

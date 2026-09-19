@@ -9,6 +9,7 @@ const [
   inbox,
   conversations,
   appLayout,
+  activeBranch,
   branchSelector,
   turn,
   reply,
@@ -20,6 +21,7 @@ const [
   readSource("src/app/(app)/inbox/page.tsx"),
   readSource("src/services/conversation.server.ts"),
   readSource("src/app/(app)/layout.tsx"),
+  readSource("src/lib/active-branch.server.ts"),
   readSource("src/components/layouts/branch-selector.tsx"),
   readSource("src/services/conversation-turn.server.ts"),
   readSource("src/services/conversation-reply.server.ts"),
@@ -32,7 +34,10 @@ const [
 // Inbox must use the selected branch scope, including the explicit NULL scope,
 // without excluding real WhatsApp rows by source.
 assert.match(inbox, /resolved\.isUnassigned\s*\?\s*"unassigned"/);
-assert.match(inbox, /listConversations\(\s*gym\.id,\s*undefined,\s*conversationScope/s);
+assert.match(
+  inbox,
+  /listConversationsWithMessagePreview\(\s*gym\.id,\s*undefined,\s*conversationScope/s,
+);
 assert.match(inbox, /conversation\.source !== "simulator"/);
 assert.match(conversations, /\.eq\("gym_id", gymId\)/);
 assert.match(
@@ -43,7 +48,8 @@ assert.match(conversations, /else if \(branchId\)[\s\S]*\.eq\("branch_id", branc
 
 // The server and client selector must agree on the unassigned sentinel, even
 // for a one-branch gym that uses a shared WhatsApp number.
-assert.match(appLayout, /cookieBranchId === UNASSIGNED_BRANCH_SENTINEL/);
+assert.match(activeBranch, /cookieBranchId === UNASSIGNED_BRANCH_SENTINEL/);
+assert.match(appLayout, /resolved\.isUnassigned[\s\S]*UNASSIGNED_BRANCH_SENTINEL/);
 assert.doesNotMatch(branchSelector, /branches\.length <= 1/);
 assert.match(branchSelector, /value=\{UNASSIGNED_BRANCH_SENTINEL\}/);
 

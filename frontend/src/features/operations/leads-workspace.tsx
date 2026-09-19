@@ -1,5 +1,5 @@
 "use client";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useMemo, useRef, useState } from "react";
 import { MessageCircle, Search, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -14,6 +14,7 @@ export function LeadsWorkspace({
   initialLeads,
   packages,
   onConvert,
+  onLoadMessages,
 }: {
   initialLeads: Lead[];
   packages: MembershipPackage[];
@@ -24,12 +25,18 @@ export function LeadsWorkspace({
     packageId: string;
     startDate: string;
   }) => Promise<{ error: string | null }>;
+  onLoadMessages: (
+    conversationId: string,
+  ) => Promise<{ data: Message[] | null; error: string | null }>;
 }) {
   const [leads, setLeads] = useState(initialLeads),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState<Lead | null>(null),
     [convert, setConvert] = useState<Lead | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [historyError, setHistoryError] = useState(""),
+    [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
+  const loadedHistoryIds = useRef(new Set<string>());
   const filtered = useMemo(
     () =>
       leads.filter((lead) =>
@@ -58,8 +65,30 @@ export function LeadsWorkspace({
     setSelected(null);
     setConvert(null);
   }
+  async function selectLead(lead: Lead) {
+    setSelected(lead);
+    setHistoryError("");
+    if (loadedHistoryIds.current.has(lead.id)) return;
+
+    setLoadingHistoryId(lead.id);
+    const result = await onLoadMessages(lead.id);
+    if (result.error || !result.data) {
+      setHistoryError(result.error ?? "Could not load this conversation.");
+    } else {
+      const updated = { ...lead, messages: result.data };
+      loadedHistoryIds.current.add(lead.id);
+      setLeads((items) => items.map((item) => (item.id === lead.id ? updated : item)));
+      setSelected((current) => (current?.id === lead.id ? updated : current));
+    }
+    setLoadingHistoryId((current) => (current === lead.id ? null : current));
+  }
   return (
     <>
+      {historyError ? (
+        <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {historyError}
+        </p>
+      ) : null}
       <div className="border-border bg-card overflow-hidden rounded-xl border">
         <div className="border-border flex items-center gap-3 border-b p-4">
           <Search className="text-muted-foreground size-4" />
@@ -75,7 +104,7 @@ export function LeadsWorkspace({
               <button
                 className="hover:bg-accent flex w-full items-center justify-between gap-4 p-4 text-left"
                 key={lead.id}
-                onClick={() => setSelected(lead)}
+                onClick={() => void selectLead(lead)}
               >
                 <span className="min-w-0">
                   <strong className="block truncate text-sm">
@@ -106,6 +135,7 @@ export function LeadsWorkspace({
           </div>
           <LeadDetail
             lead={selected}
+            loading={loadingHistoryId === selected?.id}
             onConvert={() => selected && setConvert(selected)}
           />
         </div>
@@ -179,7 +209,15 @@ export function LeadsWorkspace({
     </>
   );
 }
-function LeadDetail({ lead, onConvert }: { lead: Lead | null; onConvert: () => void }) {
+function LeadDetail({
+  lead,
+  loading,
+  onConvert,
+}: {
+  lead: Lead | null;
+  loading: boolean;
+  onConvert: () => void;
+}) {
   if (!lead)
     return (
       <aside className="border-border text-muted-foreground border-t p-6 text-sm lg:border-t-0 lg:border-l">
@@ -231,11 +269,19 @@ function LeadDetail({ lead, onConvert }: { lead: Lead | null; onConvert: () => v
         Conversation
       </p>
       <div className="mt-2 max-h-64 space-y-2 overflow-y-auto">
-        {lead.messages.map((message) => (
-          <p className="bg-muted rounded-lg p-2 text-sm" key={message.id}>
-            {message.content}
-          </p>
-        ))}
+        {loading ? (
+          <div className="space-y-2" aria-live="polite">
+            <div className="bg-muted h-10 animate-pulse rounded-lg" />
+            <div className="bg-muted h-10 w-4/5 animate-pulse rounded-lg" />
+            <p className="text-muted-foreground text-xs">Loading conversation…</p>
+          </div>
+        ) : (
+          lead.messages.map((message) => (
+            <p className="bg-muted rounded-lg p-2 text-sm" key={message.id}>
+              {message.content}
+            </p>
+          ))
+        )}
       </div>
     </aside>
   );

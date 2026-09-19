@@ -20,6 +20,7 @@ import type { MediaAsset } from "@/types/media-asset";
 import type { Facility } from "@/types/facility";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 import type { MembershipPackage } from "@/types/membership-package";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 export type ProcessConversationTurnResult = {
   customerMessage: Message | null;
@@ -33,8 +34,12 @@ export type ProcessConversationTurnResult = {
 export async function processIncomingConversationTurn(
   event: IncomingMessageEvent,
 ): Promise<ProcessConversationTurnResult> {
+  const totalStartedAt = performance.now();
+  let idempotencyMs = 0;
   if (event.whatsappMessageId) {
+    const idempotencyStartedAt = performance.now();
     const existing = await getMessageByWhatsAppMessageId(event.whatsappMessageId);
+    idempotencyMs = elapsedMs(idempotencyStartedAt);
     if (existing.error) {
       return {
         customerMessage: null,
@@ -53,7 +58,9 @@ export async function processIncomingConversationTurn(
     }
   }
 
+  const managerStartedAt = performance.now();
   const managerResult = await handleIncomingMessage(event);
+  const managerMs = elapsedMs(managerStartedAt);
   if (managerResult.error || !managerResult.data) {
     return {
       customerMessage: null,
@@ -114,7 +121,9 @@ export async function processIncomingConversationTurn(
   }
 
   try {
+    const pipelineStartedAt = performance.now();
     const pipelineResult = await generateValidatedReply(context);
+    const pipelineMs = elapsedMs(pipelineStartedAt);
     if (
       pipelineResult.action !== "knowledge_ready" ||
       !pipelineResult.validatedResponse
@@ -171,7 +180,9 @@ export async function processIncomingConversationTurn(
 
     let finalResponse = mediaSafeResponse;
 
+    let bookingActionMs = 0;
     if (pipelineResult.validatedResponse.bookingAction && pipelineResult.knowledge) {
+      const bookingStartedAt = performance.now();
       const knowledge = pipelineResult.knowledge;
       const executionResult = await executeAIBookingAction({
         action: pipelineResult.validatedResponse.bookingAction,
@@ -188,6 +199,7 @@ export async function processIncomingConversationTurn(
         customerMemory: context.conversation.customer_memory,
         sourceMessageId: context.latestCustomerMessage.id,
       });
+      bookingActionMs = elapsedMs(bookingStartedAt);
 
       if (executionResult.executed && executionResult.responseText) {
         finalResponse = {
@@ -222,6 +234,7 @@ export async function processIncomingConversationTurn(
       ],
     );
 
+    const persistenceStartedAt = performance.now();
     const saveResult = await saveAIReply(
       context.conversation.id,
       finalResponse,
@@ -232,6 +245,7 @@ export async function processIncomingConversationTurn(
       persistedTurn,
       Boolean(event.whatsappMessageId),
     );
+    const persistenceMs = elapsedMs(persistenceStartedAt);
 
     if (!saveResult.saved) {
       return {
@@ -244,6 +258,18 @@ export async function processIncomingConversationTurn(
 
     const outboundMessages = saveResult.messages ?? [];
     const aiMessage = outboundMessages[0] ?? null;
+
+    logPerformance("ai.conversation_turn", {
+      source: event.source ?? "whatsapp",
+      message_type: event.messageType,
+      idempotency_ms: idempotencyMs,
+      conversation_load_ms: managerMs,
+      ai_pipeline_ms: pipelineMs,
+      booking_action_ms: bookingActionMs,
+      persistence_ms: persistenceMs,
+      outbound_message_count: outboundMessages.length,
+      total_ms: elapsedMs(totalStartedAt),
+    });
 
     return {
       customerMessage: context.latestCustomerMessage,

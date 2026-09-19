@@ -18,6 +18,7 @@ import {
   consumeDurableRateLimit,
   rateLimitBucket,
 } from "@/services/durable-rate-limit.server";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 export const runtime = "nodejs";
 
@@ -136,7 +137,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Check every supported type before consuming cost budget. A duplicate
       // webhook becomes an opportunity to recover its previously queued reply.
+      const idempotencyStartedAt = performance.now();
       const existing = await getMessageByWhatsAppMessageId(event.whatsappMessageId);
+      logPerformance("whatsapp.idempotency_lookup", {
+        duplicate: Boolean(existing.data),
+        total_ms: elapsedMs(idempotencyStartedAt),
+      });
       if (existing.error) return { error: existing.error };
       if (existing.data) {
         return {
@@ -151,6 +157,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       let suppressAI = false;
       try {
+        const rateLimitStartedAt = performance.now();
         const [customerBudget, gymBudget] = await Promise.all([
           consumeDurableRateLimit({
             bucket: rateLimitBucket(
@@ -167,6 +174,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             windowSeconds: AI_WINDOW_SECONDS,
           }),
         ]);
+        logPerformance("whatsapp.rate_limit", {
+          scope: "ai",
+          allowed: customerBudget.allowed && gymBudget.allowed,
+          total_ms: elapsedMs(rateLimitStartedAt),
+        });
         if (customerBudget.error || gymBudget.error) {
           return { error: "Durable AI rate limiter is unavailable." };
         }
@@ -186,6 +198,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       if (event.messageType === "audio") {
         try {
+          const voiceRateLimitStartedAt = performance.now();
           const [customerVoiceBudget, gymVoiceBudget] = await Promise.all([
             consumeDurableRateLimit({
               bucket: rateLimitBucket(
@@ -202,6 +215,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               windowSeconds: VOICE_WINDOW_SECONDS,
             }),
           ]);
+          logPerformance("whatsapp.rate_limit", {
+            scope: "voice",
+            allowed: customerVoiceBudget.allowed && gymVoiceBudget.allowed,
+            total_ms: elapsedMs(voiceRateLimitStartedAt),
+          });
           if (customerVoiceBudget.error || gymVoiceBudget.error) {
             return { error: "Durable transcription rate limiter is unavailable." };
           }
@@ -250,8 +268,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
       }
 
-      return {
-        result: await processIncomingConversationTurn({
+      const turnStartedAt = performance.now();
+      const turnResult = await processIncomingConversationTurn({
           gymId: destination.data.gymId,
           endpointId: destination.data.endpointId,
           branchId: destination.data.branchId,
@@ -264,7 +282,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           metadata,
           safeFallbackReplyText,
           suppressAI,
-        }),
+        });
+      logPerformance("whatsapp.turn_processing", {
+        message_type: event.messageType,
+        action: turnResult.action,
+        total_ms: elapsedMs(turnStartedAt),
+      });
+      return {
+        result: turnResult,
       };
     });
 

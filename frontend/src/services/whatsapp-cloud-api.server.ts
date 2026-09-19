@@ -39,6 +39,7 @@ type DownloadAudioResult =
 export async function downloadWhatsAppAudio(
   mediaId: string,
 ): Promise<DownloadAudioResult> {
+  const startedAt = performance.now();
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const graphVersion = process.env.WHATSAPP_GRAPH_API_VERSION;
   if (!accessToken || !graphVersion)
@@ -46,6 +47,7 @@ export async function downloadWhatsAppAudio(
   if (!mediaId) return { data: null, error: "WhatsApp audio media ID is missing." };
 
   try {
+    const metadataStartedAt = performance.now();
     const metadataResponse = await fetch(
       `https://graph.facebook.com/${encodeURIComponent(graphVersion)}/${encodeURIComponent(mediaId)}`,
       {
@@ -53,6 +55,7 @@ export async function downloadWhatsAppAudio(
         signal: AbortSignal.timeout(META_REQUEST_TIMEOUT_MS),
       },
     );
+    const metadataMs = Math.round((performance.now() - metadataStartedAt) * 10) / 10;
     const metadata = (await metadataResponse.json().catch(() => null)) as {
       url?: string;
       mime_type?: string;
@@ -90,10 +93,12 @@ export async function downloadWhatsAppAudio(
       console.error("[WhatsApp Cloud] audio media URL was not HTTPS.");
       return { data: null, error: "Meta returned an invalid audio URL." };
     }
+    const downloadStartedAt = performance.now();
     const audioResponse = await fetch(mediaUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
       signal: AbortSignal.timeout(META_REQUEST_TIMEOUT_MS),
     });
+    const downloadMs = Math.round((performance.now() - downloadStartedAt) * 10) / 10;
     if (!audioResponse.ok) {
       console.error("[WhatsApp Cloud] audio media download failed", {
         status: audioResponse.status,
@@ -121,6 +126,9 @@ export async function downloadWhatsAppAudio(
       downloadStatus: audioResponse.status,
       mimeType,
       bytes: bytes.byteLength,
+      metadataMs,
+      downloadMs,
+      totalMs: Math.round((performance.now() - startedAt) * 10) / 10,
     });
     return { data: { bytes, mimeType }, error: null };
   } catch (error) {

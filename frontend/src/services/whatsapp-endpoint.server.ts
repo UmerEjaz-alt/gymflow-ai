@@ -4,6 +4,7 @@ import type {
   UpdateWhatsAppEndpointPayload,
   WhatsAppEndpoint,
 } from "@/types/whatsapp-endpoint";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 type Result<T> = { data: T; error: null } | { data: null; error: string };
 
@@ -25,6 +26,7 @@ export async function resolveWhatsAppEndpoint(
   phoneNumberId: string | null,
   displayPhone: string | null,
 ): Promise<Result<ResolvedWhatsAppDestination | null>> {
+  const startedAt = performance.now();
   const supabase = await createServerSupabaseClient();
 
   // Try RPC resolve_whatsapp_endpoint
@@ -40,6 +42,10 @@ export async function resolveWhatsAppEndpoint(
     // Routing is a security boundary. The database resolver contains the only
     // supported legacy compatibility path and knows whether a matching endpoint
     // was explicitly disabled; bypassing it here could reactivate that endpoint.
+    logPerformance("whatsapp.endpoint_resolution", {
+      outcome: "error",
+      total_ms: elapsedMs(startedAt),
+    });
     return { data: null, error: "WhatsApp endpoint resolution failed." };
   }
 
@@ -49,6 +55,11 @@ export async function resolveWhatsAppEndpoint(
       endpoint_id: string | null;
       branch_id: string | null;
     };
+    logPerformance("whatsapp.endpoint_resolution", {
+      outcome: "resolved",
+      shared_endpoint: row.branch_id === null,
+      total_ms: elapsedMs(startedAt),
+    });
     return {
       data: {
         gymId: row.gym_id,
@@ -59,6 +70,10 @@ export async function resolveWhatsAppEndpoint(
     };
   }
 
+  logPerformance("whatsapp.endpoint_resolution", {
+    outcome: "unmapped",
+    total_ms: elapsedMs(startedAt),
+  });
   return { data: null, error: null };
 }
 
