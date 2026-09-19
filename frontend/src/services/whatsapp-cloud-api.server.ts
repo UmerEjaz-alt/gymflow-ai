@@ -116,6 +116,12 @@ export async function downloadWhatsAppAudio(
         ? voiceLimitExceeded("Voice note exceeds the 5 MB limit.")
         : { data: null, error: "This voice note is empty." };
     }
+    console.info("[WhatsApp Cloud] audio media downloaded", {
+      metadataStatus: metadataResponse.status,
+      downloadStatus: audioResponse.status,
+      mimeType,
+      bytes: bytes.byteLength,
+    });
     return { data: { bytes, mimeType }, error: null };
   } catch (error) {
     console.error("[WhatsApp Cloud] audio media network failure", {
