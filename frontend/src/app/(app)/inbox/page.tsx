@@ -11,7 +11,6 @@ import {
 } from "@/services/conversation.server";
 import { processIncomingConversationTurn } from "@/services/conversation-turn.server";
 import { getGym } from "@/services/gym.server";
-import { getBranches } from "@/services/branch.server";
 import { listMessages } from "@/services/message.server";
 import { resolveActiveBranch } from "@/lib/active-branch.server";
 import { getWhatsAppEndpoints } from "@/services/whatsapp-endpoint.server";
@@ -30,32 +29,26 @@ async function loadSimulatorData(): Promise<{
   branches: Branch[];
   error?: string;
 }> {
-  const gymResult = await getGym();
-  if (gymResult.error || !gymResult.data)
+  const resolved = await resolveActiveBranch();
+  if (resolved.error || !resolved.gym)
     return {
       conversations: [],
       activeEndpoints: [],
       branches: [],
-      error: gymResult.error ?? "Create your gym profile before starting a simulation.",
+      error: resolved.error ?? "Create your gym profile before opening the inbox.",
     };
 
-  const gym = gymResult.data;
+  const gym = resolved.gym;
 
-  // Load branches and endpoints in parallel
-  const [branchesResult, endpointsResult] = await Promise.all([
-    getBranches(gym.id),
-    getWhatsAppEndpoints(gym.id),
-  ]);
-
-  const branches = branchesResult.data ?? [];
+  const branches = resolved.branches;
+  const endpointsResult = await getWhatsAppEndpoints(gym.id);
   const activeEndpoints = (endpointsResult.data ?? []).filter((ep) => ep.is_active);
 
-  const branchResult = await resolveActiveBranch();
-  // Fetch simulator conversations
+  const conversationScope = resolved.isUnassigned ? "unassigned" : resolved.branch.id;
   const conversationsResult = await listConversations(
     gym.id,
-    "simulator",
-    branchResult.branch?.id,
+    undefined,
+    conversationScope,
   );
 
   const conversations = await Promise.all(
@@ -134,6 +127,9 @@ async function sendSimulatorMessage(conversationId: string, content: string) {
   if (convResult.error || !convResult.data)
     return { error: convResult.error ?? "Simulated conversation not found." };
   const conversation = convResult.data;
+  if (conversation.source !== "simulator") {
+    return { error: "Real WhatsApp conversations are read-only in the inbox." };
+  }
 
   const result = await processIncomingConversationTurn({
     gymId: gymResult.data.id,
@@ -156,7 +152,7 @@ async function sendSimulatorMessage(conversationId: string, content: string) {
 // Page
 // ---------------------------------------------------------------------------
 
-/** Database-backed demo channel for the production GymFlow AI pipeline. */
+/** Branch-scoped inbox for real WhatsApp and simulated conversations. */
 export default async function InboxPage() {
   const { conversations, activeEndpoints, branches, error } = await loadSimulatorData();
   return (
@@ -166,11 +162,10 @@ export default async function InboxPage() {
           <Inbox aria-hidden className="size-4" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Conversation Simulator
-          </h1>
+          <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
           <p className="text-muted-foreground text-sm">
-            Test the same AI receptionist that handles your real WhatsApp conversations.
+            Review real WhatsApp conversations and test the same AI pipeline with
+            simulated customers.
           </p>
         </div>
       </div>

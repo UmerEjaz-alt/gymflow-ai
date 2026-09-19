@@ -255,8 +255,10 @@ export function ConversationSimulator({
         <aside className="border-border flex min-h-0 flex-col border-b lg:border-r lg:border-b-0">
           <div className="border-border flex items-center justify-between border-b px-4 py-4">
             <div>
-              <p className="font-semibold">Simulated customers</p>
-              <p className="text-muted-foreground text-xs">Private to this gym</p>
+              <p className="font-semibold">Customers</p>
+              <p className="text-muted-foreground text-xs">
+                Scoped to this gym and branch
+              </p>
             </div>
             <Button
               aria-label="New simulated customer"
@@ -322,7 +324,7 @@ export function ConversationSimulator({
             {!conversations.length ? (
               <div className="text-muted-foreground flex flex-col items-center px-6 py-12 text-center text-sm">
                 <MessageCircleMore className="mb-3 size-7" />
-                Create a customer to begin a realistic WhatsApp conversation.
+                No conversations in this branch view.
               </div>
             ) : null}
           </div>
@@ -340,7 +342,8 @@ export function ConversationSimulator({
                   {selected.customer_name || "Unnamed customer"}
                 </p>
                 <p className="text-muted-foreground text-xs">
-                  {selected.customer_phone} · WhatsApp
+                  {selected.customer_phone} ·{" "}
+                  {selected.source === "whatsapp" ? "WhatsApp" : "Simulator"}
                 </p>
               </div>
 
@@ -408,26 +411,32 @@ export function ConversationSimulator({
               ) : null}
             </div>
 
-            <form
-              onSubmit={sendMessage}
-              className="border-border bg-card flex gap-2 border-t p-3 sm:p-4"
-            >
-              <Input
-                aria-label="Customer message"
-                disabled={isSending}
-                onChange={(event) => setMessage(event.target.value)}
-                placeholder={`Message as ${selected.customer_name || "customer"}…`}
-                value={message}
-              />
-              <Button
-                aria-label="Send message"
-                disabled={isSending || !message.trim()}
-                size="icon"
-                type="submit"
+            {selected.source === "simulator" ? (
+              <form
+                onSubmit={sendMessage}
+                className="border-border bg-card flex gap-2 border-t p-3 sm:p-4"
               >
-                <SendHorizonal aria-hidden className="size-4" />
-              </Button>
-            </form>
+                <Input
+                  aria-label="Customer message"
+                  disabled={isSending}
+                  onChange={(event) => setMessage(event.target.value)}
+                  placeholder={`Message as ${selected.customer_name || "customer"}…`}
+                  value={message}
+                />
+                <Button
+                  aria-label="Send message"
+                  disabled={isSending || !message.trim()}
+                  size="icon"
+                  type="submit"
+                >
+                  <SendHorizonal aria-hidden className="size-4" />
+                </Button>
+              </form>
+            ) : (
+              <p className="border-border bg-card text-muted-foreground border-t p-4 text-center text-xs">
+                Real WhatsApp conversations are shown read-only.
+              </p>
+            )}
           </div>
         ) : (
           <div className="text-muted-foreground flex flex-col items-center justify-center p-8 text-center">

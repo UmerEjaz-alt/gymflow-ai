@@ -3,7 +3,7 @@ import { MediaManager } from "@/features/settings/components/media-manager";
 import { resolveActiveBranch } from "@/lib/active-branch.server";
 import { getMediaAssets } from "@/services/media-asset.server";
 import { getTrainers } from "@/services/trainer.server";
-import { archiveMediaAssetAction, saveMediaAssetAction } from "../actions";
+import { archiveMediaAssetAction, uploadMediaAssetAction } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -33,11 +33,9 @@ export default async function MediaPage() {
         </div>
       </div>
       <MediaManager
-        gymId={resolved.gym.id}
-        branchId={resolved.branch.id}
         initialAssets={media.data ?? []}
         trainers={(trainers.data ?? []).filter((trainer) => trainer.active)}
-        onSave={saveMediaAssetAction}
+        onUpload={uploadMediaAssetAction}
         onArchive={archiveMediaAssetAction}
       />
     </div>

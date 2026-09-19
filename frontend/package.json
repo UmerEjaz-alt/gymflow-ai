@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "verify:automations": "node scripts/verify-automation-run.mjs",
+    "verify:whatsapp-regressions": "node scripts/verify-whatsapp-regressions.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

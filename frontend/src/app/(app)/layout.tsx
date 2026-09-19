@@ -6,6 +6,7 @@ import { AppShell } from "@/components/layouts/app-shell";
 import { getCurrentUser } from "@/services/auth.server";
 import { getGym } from "@/services/gym.server";
 import { getBranches } from "@/services/branch.server";
+import { UNASSIGNED_BRANCH_SENTINEL } from "@/lib/active-branch.server";
 
 export const dynamic = "force-dynamic";
 
@@ -28,9 +29,12 @@ export default async function ApplicationLayout({
   const cookieBranchId = cookieStore.get("gymflow_active_branch")?.value ?? null;
 
   // Validate: the cookie value must belong to this gym's branches.
-  const validBranchId = branches.some((b) => b.id === cookieBranchId)
-    ? cookieBranchId
-    : (branches.find((b) => b.is_default)?.id ?? branches[0]?.id ?? null);
+  const validBranchId =
+    cookieBranchId === UNASSIGNED_BRANCH_SENTINEL
+      ? UNASSIGNED_BRANCH_SENTINEL
+      : branches.some((b) => b.id === cookieBranchId)
+        ? cookieBranchId
+        : (branches.find((b) => b.is_default)?.id ?? branches[0]?.id ?? null);
 
   return (
     <AppShell

@@ -5,22 +5,18 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
-import type {
-  CreateMediaAssetPayload,
-  MediaAsset,
-  MediaAssetCategory,
-} from "@/types/media-asset";
+import {
+  validateWhatsAppImageMetadata,
+  WHATSAPP_IMAGE_ACCEPT,
+} from "@/lib/whatsapp-media-upload";
+import type { MediaAsset, MediaAssetCategory } from "@/types/media-asset";
 import type { Trainer } from "@/types/trainer";
 
 type Props = {
-  gymId: string;
-  branchId: string;
   initialAssets: MediaAsset[];
   trainers: Trainer[];
-  onSave: (
-    id: string | null,
-    payload: CreateMediaAssetPayload,
+  onUpload: (
+    formData: FormData,
   ) => Promise<{ data: MediaAsset | null; error: string | null }>;
   onArchive: (id: string) => Promise<{ error: string | null }>;
 };
@@ -33,14 +29,7 @@ const categories: Array<[MediaAssetCategory, string]> = [
   ["other", "Other"],
 ];
 
-export function MediaManager({
-  gymId,
-  branchId,
-  initialAssets,
-  trainers,
-  onSave,
-  onArchive,
-}: Props) {
+export function MediaManager({ initialAssets, trainers, onUpload, onArchive }: Props) {
   const { toast } = useToast();
   const [assets, setAssets] = useState(initialAssets);
   const [file, setFile] = useState<File | null>(null);
@@ -56,36 +45,18 @@ export function MediaManager({
   async function upload() {
     if (!file || !title.trim())
       return toast("Choose an image and add a title.", "error");
-    if (
-      !["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
-      file.size > 5 * 1024 * 1024
-    )
-      return toast("Use a JPG, PNG, or WebP image up to 5 MB.", "error");
+    const validationError = validateWhatsAppImageMetadata(file);
+    if (validationError) return toast(validationError, "error");
     if (featured && active.filter((asset) => asset.featured).length >= 3)
       return toast("This branch already has three featured images.", "error");
     setSaving(true);
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-    const path = `${gymId}/${branchId}/${crypto.randomUUID()}.${ext}`;
-    const storage = createBrowserSupabaseClient();
-    const uploaded = await storage.storage
-      .from("gymflow-media")
-      .upload(path, file, { contentType: file.type, upsert: false });
-    if (uploaded.error) {
-      setSaving(false);
-      return toast(uploaded.error.message, "error");
-    }
-    const url = storage.storage.from("gymflow-media").getPublicUrl(path).data.publicUrl;
-    const saved = await onSave(null, {
-      gym_id: gymId,
-      branch_id: branchId,
-      title: title.trim(),
-      media_type: "photo",
-      category: trainerId ? "trainer" : category,
-      media_url: url,
-      active: true,
-      featured: trainerId ? false : featured,
-      trainer_id: trainerId || null,
-    });
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("title", title.trim());
+    formData.set("category", category);
+    formData.set("featured", String(featured));
+    formData.set("trainerId", trainerId);
+    const saved = await onUpload(formData);
     setSaving(false);
     if (saved.error || !saved.data)
       return toast(saved.error ?? "Could not save image metadata.", "error");
@@ -124,8 +95,19 @@ export function MediaManager({
           />
           <Input
             type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            accept={WHATSAPP_IMAGE_ACCEPT}
+            onChange={(e) => {
+              const selected = e.target.files?.[0] ?? null;
+              if (!selected) return setFile(null);
+              const validationError = validateWhatsAppImageMetadata(selected);
+              if (validationError) {
+                e.target.value = "";
+                setFile(null);
+                toast(validationError, "error");
+                return;
+              }
+              setFile(selected);
+            }}
           />
           <select
             value={trainerId}

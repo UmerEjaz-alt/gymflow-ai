@@ -17,6 +17,7 @@ import {
 } from "@/services/media-asset.server";
 import { resolveActiveBranch } from "@/lib/active-branch.server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { validateWhatsAppImageUpload } from "@/lib/whatsapp-media-upload";
 import type { UpdateBranchPayload } from "@/types/branch";
 import type { Facility, CreateFacilityPayload } from "@/types/facility";
 import type { MediaAsset, CreateMediaAssetPayload } from "@/types/media-asset";
@@ -149,28 +150,71 @@ export async function deleteFacilityAction(
   return deleteFacility(facilityId);
 }
 
-export async function saveMediaAssetAction(
-  assetId: string | null,
-  payload: CreateMediaAssetPayload,
+export async function uploadMediaAssetAction(
+  formData: FormData,
 ): Promise<{ data: MediaAsset | null; error: string | null }> {
   const resolved = await resolveActiveBranch();
   if (resolved.error || !resolved.gym || !resolved.branch) {
     return { data: null, error: resolved.error ?? "Active branch not resolved." };
   }
+
+  const file = formData.get("file");
+  const title = String(formData.get("title") ?? "").trim();
+  const requestedCategory = String(formData.get("category") ?? "");
+  const trainerId = String(formData.get("trainerId") ?? "").trim() || null;
+  const allowedCategories = new Set([
+    "general_gym",
+    "cardio",
+    "strength_area",
+    "sauna",
+    "locker_room",
+    "other",
+  ]);
+  if (!(file instanceof File) || !title) {
+    return { data: null, error: "Choose an image and add a title." };
+  }
+  if (!trainerId && !allowedCategories.has(requestedCategory)) {
+    return { data: null, error: "Invalid media category." };
+  }
+
+  const validated = await validateWhatsAppImageUpload(file);
+  if (validated.error || !validated.data) {
+    return { data: null, error: validated.error };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const storagePath = `${resolved.gym.id}/${resolved.branch.id}/${crypto.randomUUID()}.${validated.data.extension}`;
+  const uploaded = await supabase.storage
+    .from("gymflow-media")
+    .upload(storagePath, file, {
+      contentType: validated.data.mimeType,
+      upsert: false,
+    });
+  if (uploaded.error) return { data: null, error: uploaded.error.message };
+
+  const mediaUrl = supabase.storage.from("gymflow-media").getPublicUrl(storagePath)
+    .data.publicUrl;
   const scopedPayload: CreateMediaAssetPayload = {
-    ...payload,
     gym_id: resolved.gym.id,
     branch_id: resolved.branch.id,
+    title,
+    media_type: "photo",
+    category: trainerId
+      ? "trainer"
+      : (requestedCategory as CreateMediaAssetPayload["category"]),
+    media_url: mediaUrl,
+    active: true,
+    featured: trainerId ? false : formData.get("featured") === "true",
+    trainer_id: trainerId,
   };
-  try {
-    const url = new URL(scopedPayload.media_url);
-    if (url.protocol !== "https:")
-      return { data: null, error: "Image URL must use HTTPS." };
-  } catch {
-    return { data: null, error: "Invalid image URL." };
+
+  const saved = await createMediaAsset(scopedPayload);
+  if (saved.error) {
+    await supabase.storage.from("gymflow-media").remove([storagePath]);
+    return saved;
   }
-  if (assetId) return updateMediaAsset(assetId, scopedPayload);
-  return createMediaAsset(scopedPayload);
+  revalidatePath("/settings/media");
+  return saved;
 }
 
 export async function archiveMediaAssetAction(

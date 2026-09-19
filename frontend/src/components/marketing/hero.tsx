@@ -34,7 +34,7 @@ function CinematicVideo({ story }: { story: HeroStoryState }) {
         onLoadedMetadata={onVideoLoaded}
         onCanPlay={onVideoCanPlay}
         onError={onVideoError}
-        className="absolute top-[7svh] left-1/2 h-[72svh] w-auto max-w-none -translate-x-1/2 object-cover object-center md:inset-0 md:h-full md:w-full md:translate-x-0 md:object-cover"
+        className="absolute top-[7svh] left-1/2 h-[72svh] w-auto max-w-none -translate-x-1/2 object-cover object-center md:inset-x-0 md:top-20 md:h-[calc(100%-5rem)] md:w-full md:origin-top md:translate-x-0 md:scale-[1.05] md:object-contain md:object-top"
       >
         <source src="/kroway-closing-gym-mobile.mp4" type="video/mp4" />
       </video>

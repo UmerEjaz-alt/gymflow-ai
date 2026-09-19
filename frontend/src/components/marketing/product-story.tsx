@@ -1,364 +1,710 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import {
+  motion,
+  useMotionValueEvent,
+  useReducedMotion,
+  useScroll,
+  useSpring,
+  useTransform,
+  type MotionValue,
+  type MotionStyle,
+} from "framer-motion";
+import {
+  ArrowDown,
   Bot,
   CalendarDays,
   Check,
+  CheckCheck,
   ChevronDown,
+  Clock3,
   Inbox,
+  MessageSquare,
+  MoreHorizontal,
+  Search,
+  Send,
   Settings,
+  ShieldCheck,
+  Sparkles,
   UserRoundCheck,
   UsersRound,
 } from "lucide-react";
-import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
+import styles from "./product-story.module.css";
 
-const nav = [
-  ["Inbox", Inbox],
-  ["Leads", UserRoundCheck],
-  ["Members", UsersRound],
-  ["Bookings", CalendarDays],
-  ["Automations", Bot],
-  ["Settings", Settings],
-] as const;
+const chapters = [
+  {
+    label: "Inbox",
+    icon: Inbox,
+    title: "A conversation. A clear next step.",
+    description: "See the message, the customer, and what happens next — together.",
+    proof: "Customer context",
+    outcome: "Visit booked",
+    note: "An after-hours question becomes a confirmed gym visit.",
+  },
+  {
+    label: "Bookings",
+    icon: CalendarDays,
+    title: "The visit is already on the schedule.",
+    description: "Your team knows who is coming, when, and why they reached out.",
+    proof: "Connected bookings",
+    outcome: "Ready for the visit",
+    note: "The booking keeps the conversation attached, so staff have the context.",
+  },
+  {
+    label: "Members",
+    icon: UsersRound,
+    title: "The relationship stays connected.",
+    description: "Memberships, conversation history, and follow-ups in one place.",
+    proof: "Member history",
+    outcome: "A connected member",
+    note: "One customer record carries the relationship beyond the first visit.",
+  },
+];
+const people = [
+  {
+    name: "Jordan A.",
+    initials: "JA",
+    message: "Can I visit tomorrow around 6?",
+    time: "Now",
+    color: "copper",
+  },
+  {
+    name: "Sam K.",
+    initials: "SK",
+    message: "Do you have personal trainers?",
+    time: "4m",
+    color: "blue",
+  },
+  {
+    name: "Maya R.",
+    initials: "MR",
+    message: "What time do you close?",
+    time: "12m",
+    color: "green",
+  },
+  {
+    name: "Alex M.",
+    initials: "AM",
+    message: "Thanks, see you then!",
+    time: "28m",
+    color: "purple",
+  },
+];
 
-function ProductChrome({ active }: { active: string }) {
+function Avatar({
+  initials,
+  color = "copper",
+  large = false,
+}: {
+  initials: string;
+  color?: string;
+  large?: boolean;
+}) {
   return (
-    <aside className="hidden w-44 shrink-0 border-r border-white/[0.08] bg-[#0d0e10] px-3 py-5 md:block lg:w-52">
-      <p className="font-display px-3 text-sm font-black tracking-[-0.04em] text-[#f6eee7] uppercase">
-        Kroway
-      </p>
-      <div className="mt-8 space-y-1">
-        {nav.map(([label, Icon]) => (
+    <span
+      className={`${styles.avatar} ${styles[color]} ${large ? styles.avatarLarge : ""}`}
+    >
+      {initials}
+    </span>
+  );
+}
+
+function InboxPreview() {
+  return (
+    <div className={styles.inbox}>
+      <aside className={styles.conversations} aria-label="Example conversations">
+        <div className={styles.listHeading}>
+          <strong>Messages</strong>
+          <span className={styles.count}>4</span>
+        </div>
+        <div className={styles.search}>
+          <Search size={13} /> Search conversations
+        </div>
+        <div className={styles.filters}>
+          <span>All messages</span>
+          <span>Unread</span>
+        </div>
+        {people.map((person, index) => (
           <div
-            key={label}
-            className={`flex h-9 items-center gap-3 px-3 text-[10px] ${active === label ? "bg-[#df8a55]/10 text-[#f0ad7d]" : "text-[#74777d]"}`}
+            key={person.name}
+            className={`${styles.person} ${index === 0 ? styles.selectedPerson : ""}`}
           >
-            <Icon className="size-3.5" strokeWidth={1.6} />
-            <span>{label}</span>
+            <Avatar initials={person.initials} color={person.color} />
+            <div>
+              <div className={styles.personName}>
+                <strong>{person.name}</strong>
+                <small>{person.time}</small>
+              </div>
+              <p>{person.message}</p>
+              <span className={styles.channel}>WhatsApp</span>
+            </div>
           </div>
         ))}
-      </div>
-      <p className="mt-auto px-3 pt-24 text-[8px] leading-relaxed tracking-[0.12em] text-[#55575c] uppercase">
-        Gym operations,
-        <br />
-        simplified.
-      </p>
-    </aside>
-  );
-}
-
-function ProductHeader({ title }: { title: string }) {
-  return (
-    <header className="flex h-14 items-center justify-between border-b border-white/[0.08] px-4 md:px-6">
-      <div>
-        <p className="text-[8px] tracking-[0.2em] text-[#6f7177] uppercase">
-          Kroway system
-        </p>
-        <p className="mt-0.5 text-xs font-semibold text-[#e8e6e3]">{title}</p>
-      </div>
-      <div className="flex items-center gap-2 border border-white/10 px-3 py-2 text-[9px] text-[#a8a9ad]">
-        <span className="sr-only">Example branch:</span>
-        Downtown <ChevronDown aria-hidden="true" className="size-3" />
-      </div>
-    </header>
-  );
-}
-
-function InboxScreen() {
-  return (
-    <div className="flex h-full w-1/3 shrink-0 bg-[#111214]">
-      <ProductChrome active="Inbox" />
-      <div className="min-w-0 flex-1">
-        <ProductHeader title="Conversation workspace" />
-        <div className="grid h-[calc(100%-3.5rem)] grid-cols-1 md:grid-cols-[14rem_1fr_13rem] lg:grid-cols-[16rem_1fr_15rem]">
-          <div className="hidden border-r border-white/[0.08] p-3 md:block">
-            <p className="px-2 text-[8px] tracking-[0.2em] text-[#6c6e73] uppercase">
-              Active conversations
-            </p>
-            {[
-              ["Jordan A.", "Can I visit tomorrow…", "Now"],
-              ["Sam K.", "Do you have trainers?", "4m"],
-              ["Maya R.", "What time do you close?", "12m"],
-            ].map(([name, text, time], index) => (
-              <div
-                key={name}
-                className={`mt-3 border-l px-3 py-3 ${index === 0 ? "border-[#dc8451] bg-white/[0.035]" : "border-transparent"}`}
-              >
-                <div className="flex justify-between gap-2">
-                  <p className="text-[10px] font-medium text-[#dedbd7]">{name}</p>
-                  <span className="text-[7px] text-[#67696e]">{time}</span>
-                </div>
-                <p className="mt-1 truncate text-[8px] text-[#74767b]">{text}</p>
-              </div>
-            ))}
-          </div>
-          <div className="flex min-w-0 flex-col p-4 md:p-6">
-            <div className="border-b border-white/[0.08] pb-4">
-              <p className="text-sm font-semibold text-[#ebe7e2]">Jordan A.</p>
-              <p className="mt-1 text-[8px] text-[#72747a]">
-                Example customer · After-hours inquiry
-              </p>
-            </div>
-            <div className="flex-1 space-y-5 py-6">
-              <div className="max-w-[27rem] border-l border-[#6b665f] pl-4">
-                <p className="text-[7px] tracking-[0.22em] text-[#77736e] uppercase">
-                  Customer
-                </p>
-                <p className="mt-2 text-xs leading-relaxed text-[#c9c3bd]">
-                  Can I visit tomorrow around 6?
-                </p>
-              </div>
-              <div className="ml-auto max-w-[29rem] border-r border-[#d67c49] pr-4 text-right">
-                <p className="text-[7px] tracking-[0.22em] text-[#d48a5c] uppercase">
-                  Kroway
-                </p>
-                <p className="mt-2 text-xs leading-relaxed text-[#f0e6dd]">
-                  Absolutely. I can book that for you.
-                </p>
-              </div>
-              <div className="ml-auto grid w-full max-w-[29rem] grid-cols-2 border-y border-[#784b35]/45 py-4">
-                <div>
-                  <p className="text-[7px] tracking-[0.2em] text-[#77736e] uppercase">
-                    Visit
-                  </p>
-                  <p className="mt-1 text-[11px] text-[#ded5cd]">Tomorrow</p>
-                </div>
-                <div className="border-l border-white/10 pl-4">
-                  <p className="text-[7px] tracking-[0.2em] text-[#77736e] uppercase">
-                    Time
-                  </p>
-                  <p className="mt-1 text-[11px] font-semibold text-[#e59a65]">18:00</p>
-                </div>
-              </div>
-            </div>
-            <div className="h-10 border border-white/[0.09] px-4 py-3 text-[9px] text-[#62646a]">
-              Message Jordan…
-            </div>
-          </div>
-          <div className="hidden border-l border-white/[0.08] p-5 md:block">
-            <p className="text-[8px] tracking-[0.2em] text-[#77797e] uppercase">
-              Customer record
-            </p>
-            <div className="mt-5 space-y-5">
-              <div>
-                <p className="text-[7px] text-[#65676c] uppercase">Stage</p>
-                <p className="mt-1 text-[10px] text-[#e09a69]">Visit booked</p>
-              </div>
-              <div>
-                <p className="text-[7px] text-[#65676c] uppercase">Interest</p>
-                <p className="mt-1 text-[10px] text-[#d0ccc8]">Monthly membership</p>
-              </div>
-              <div>
-                <p className="text-[7px] text-[#65676c] uppercase">Source</p>
-                <p className="mt-1 text-[10px] text-[#d0ccc8]">WhatsApp</p>
-              </div>
-            </div>
-          </div>
+        <div className={styles.listFooter}>
+          <ShieldCheck size={14} /> Your team stays in control
         </div>
-      </div>
-    </div>
-  );
-}
-
-function BookingsScreen() {
-  const rows = [
-    ["18:00", "Jordan A.", "Gym visit", "Confirmed"],
-    ["18:30", "Sam K.", "Consultation", "Confirmed"],
-    ["19:15", "Maya R.", "Trial session", "Pending"],
-  ];
-  return (
-    <div className="flex h-full w-1/3 shrink-0 bg-[#111214]">
-      <ProductChrome active="Bookings" />
-      <div className="min-w-0 flex-1">
-        <ProductHeader title="Bookings" />
-        <div className="p-4 md:p-7 lg:p-9">
-          <div className="flex items-end justify-between border-b border-white/[0.09] pb-5">
+      </aside>
+      <div className={styles.chat}>
+        <div className={styles.chatHeader}>
+          <Avatar initials="JA" />
+          <div>
+            <strong>Jordan A.</strong>
+            <span>WhatsApp conversation</span>
+          </div>
+          <span className={styles.aiBadge}>
+            <Sparkles size={12} /> AI handling
+          </span>
+        </div>
+        <div className={styles.messages}>
+          <span className={styles.dateDivider}>Today · 8:42 PM</span>
+          <div className={styles.customerMessage}>
+            <p>Hi! Can I visit tomorrow around 6?</p>
+            <small>8:42 PM</small>
+          </div>
+          <div className={styles.assistantLabel}>
+            <Sparkles size={12} /> Kroway
+          </div>
+          <div className={styles.aiMessage}>
+            <p>
+              Absolutely. I can book a gym visit for tomorrow at 6:00 PM. Shall I
+              confirm it?
+            </p>
+            <small>
+              8:42 PM <CheckCheck size={12} />
+            </small>
+          </div>
+          <div className={styles.customerMessage}>
+            <p>Yes, that works. Thank you!</p>
+            <small>8:43 PM</small>
+          </div>
+          <div className={styles.bookingReceipt}>
+            <div className={styles.receiptIcon}>
+              <CalendarDays size={18} />
+            </div>
             <div>
-              <p className="text-[8px] tracking-[0.2em] text-[#74767b] uppercase">
-                Tomorrow
-              </p>
-              <h3 className="font-display mt-1 text-2xl font-bold tracking-[-0.05em] text-[#ece7e2] uppercase md:text-3xl">
-                Visit schedule
-              </h3>
+              <strong>Gym visit confirmed</strong>
+              <span>Tomorrow · 6:00 PM · Downtown</span>
             </div>
-            <div className="flex border border-white/10 text-[8px]">
-              <span className="bg-[#df8b58]/12 px-3 py-2 text-[#df9b70]">Today</span>
-              <span className="px-3 py-2 text-[#707278]">Week</span>
-            </div>
+            <Check size={15} />
           </div>
-          <div className="mt-5">
-            <div className="hidden grid-cols-[7rem_1fr_1fr_8rem] gap-4 border-b border-white/[0.08] px-3 pb-3 text-[7px] tracking-[0.18em] text-[#63656a] uppercase md:grid">
-              <span>Time</span>
-              <span>Customer</span>
-              <span>Booking type</span>
-              <span>Status</span>
-            </div>
-            {rows.map(([time, name, type, status], index) => (
-              <div
-                key={name}
-                className="grid grid-cols-[4.5rem_1fr_auto] items-center gap-3 border-b border-white/[0.08] px-2 py-5 md:grid-cols-[7rem_1fr_1fr_8rem] md:gap-4 md:px-3"
-              >
-                <p className="font-display text-lg font-bold tracking-[-0.04em] text-[#e8a06f]">
-                  {time}
-                </p>
-                <div>
-                  <p className="text-[11px] font-medium text-[#ddd8d2]">{name}</p>
-                  <p className="mt-1 text-[7px] text-[#696b70] md:hidden">{type}</p>
-                </div>
-                <p className="hidden text-[9px] text-[#949398] md:block">{type}</p>
-                <span
-                  className={`w-fit border px-2 py-1 text-[7px] uppercase ${index < 2 ? "border-[#826047] text-[#cda07e]" : "border-white/10 text-[#77797e]"}`}
-                >
-                  {status}
-                </span>
-              </div>
-            ))}
+          <div className={styles.systemMessage}>
+            <CheckCheck size={13} /> Booking added to Jordan’s record
           </div>
         </div>
+        <div className={styles.composer}>
+          <span>Message Jordan…</span>
+          <span>
+            <Send size={14} />
+          </span>
+        </div>
+        <p className={styles.composerNote}>
+          AI handles the reply. Your team can take over.
+        </p>
+      </div>
+      <aside className={styles.customerContext}>
+        <div className={styles.contextHeading}>
+          Customer details <MoreHorizontal size={16} />
+        </div>
+        <div className={styles.profile}>
+          <Avatar initials="JA" large />
+          <strong>Jordan A.</strong>
+          <span>New lead · WhatsApp</span>
+        </div>
+        <div className={styles.contextFields}>
+          <div>
+            <span>Interested in</span>
+            <strong>Monthly membership</strong>
+          </div>
+          <div>
+            <span>Branch</span>
+            <strong>Downtown</strong>
+          </div>
+          <div>
+            <span>Stage</span>
+            <b className={styles.status}>Visit booked</b>
+          </div>
+        </div>
+        <p className={styles.eyebrow}>Next up</p>
+        <div className={styles.nextVisit}>
+          <CalendarDays size={17} />
+          <strong>Gym visit</strong>
+          <span>Tomorrow, 6:00 PM</span>
+        </div>
+        <div className={styles.contextHistory}>
+          <span />
+          <p>
+            Conversation started<small>Today, 8:42 PM</small>
+          </p>
+        </div>
+        <div className={styles.contextHistory}>
+          <span />
+          <p>
+            Visit confirmed<small>Today, 8:43 PM</small>
+          </p>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function BookingsPreview() {
+  return (
+    <div className={styles.workspace}>
+      <div className={styles.workspaceHeading}>
+        <div>
+          <h3>Bookings</h3>
+          <p>A clear plan for every visit.</p>
+        </div>
+        <span className={styles.viewSwitch}>
+          <span>Today</span>
+          <b>Week</b>
+        </span>
+      </div>
+      <div className={styles.scheduleLayout}>
+        <div className={styles.schedule}>
+          <div className={styles.dayHeading}>
+            <span>Tomorrow</span>
+            <small>3 bookings</small>
+          </div>
+          {[
+            ["18:00", "JA", "Jordan A.", "Gym visit", "Confirmed"],
+            ["18:30", "SK", "Sam K.", "Consultation", "Confirmed"],
+            ["19:15", "MR", "Maya R.", "Trial session", "Pending"],
+          ].map(([time, initials, name, type, status], i) => (
+            <div
+              key={name}
+              className={`${styles.appointment} ${i === 0 ? styles.highlightAppointment : ""}`}
+            >
+              <span className={styles.appointmentTime}>{time}</span>
+              <Avatar
+                initials={initials}
+                color={i === 1 ? "blue" : i === 2 ? "green" : "copper"}
+              />
+              <div>
+                <strong>{name}</strong>
+                <span>{type}</span>
+              </div>
+              <b className={status === "Confirmed" ? styles.status : styles.pending}>
+                {status}
+              </b>
+            </div>
+          ))}
+          <div className={styles.dayHeading}>
+            <span>The following day</span>
+            <small>1 booking</small>
+          </div>
+          <div className={styles.appointment}>
+            <span className={styles.appointmentTime}>17:00</span>
+            <Avatar initials="AM" color="purple" />
+            <div>
+              <strong>Alex M.</strong>
+              <span>Gym visit</span>
+            </div>
+            <b className={styles.status}>Confirmed</b>
+          </div>
+          <div className={styles.scheduleNote}>
+            <Clock3 size={14} /> All visit times shown for the Downtown branch.
+          </div>
+        </div>
+        <aside className={styles.visitDetail}>
+          <div className={styles.detailKicker}>
+            <CalendarDays size={15} /> Booking details
+          </div>
+          <Avatar initials="JA" large />
+          <h4>Jordan’s gym visit</h4>
+          <span className={styles.status}>Confirmed</span>
+          <dl>
+            <div>
+              <dt>When</dt>
+              <dd>Tomorrow, 6:00 PM</dd>
+            </div>
+            <div>
+              <dt>Where</dt>
+              <dd>Downtown branch</dd>
+            </div>
+            <div>
+              <dt>Created from</dt>
+              <dd>
+                <MessageSquare size={13} /> WhatsApp conversation
+              </dd>
+            </div>
+          </dl>
+          <blockquote>
+            “Can I visit tomorrow around 6?”<span>Jordan A. · Original message</span>
+          </blockquote>
+          <p>
+            <Check size={13} /> Customer context stays attached
+          </p>
+        </aside>
       </div>
     </div>
   );
 }
 
-function MembersScreen() {
+function MembersPreview() {
   return (
-    <div className="flex h-full w-1/3 shrink-0 bg-[#111214]">
-      <ProductChrome active="Members" />
-      <div className="min-w-0 flex-1">
-        <ProductHeader title="Members" />
-        <div className="grid h-[calc(100%-3.5rem)] grid-cols-1 md:grid-cols-[1fr_18rem]">
-          <div className="p-4 md:p-7 lg:p-9">
-            <p className="text-[8px] tracking-[0.2em] text-[#74767b] uppercase">
-              Customer lifecycle
-            </p>
-            <h3 className="font-display mt-2 max-w-[13ch] text-3xl leading-[0.92] font-bold tracking-[-0.05em] text-[#ece7e2] uppercase md:text-4xl">
-              From booked visit to member record.
-            </h3>
-            <div className="mt-8 border-y border-white/[0.09]">
-              {[
-                ["Jordan A.", "Monthly membership", "Active"],
-                ["Maya R.", "Quarterly membership", "Expiring soon"],
-                ["Sam K.", "Annual membership", "Active"],
-              ].map(([name, plan, status]) => (
-                <div
-                  key={name}
-                  className="grid grid-cols-[1fr_auto] items-center gap-4 border-b border-white/[0.08] py-4 last:border-0 md:grid-cols-[1fr_1fr_auto]"
-                >
-                  <p className="text-[11px] font-medium text-[#ddd8d2]">{name}</p>
-                  <p className="hidden text-[9px] text-[#7d7f84] md:block">{plan}</p>
-                  <span className="text-[8px] text-[#d4966d]">{status}</span>
-                </div>
-              ))}
+    <div className={styles.workspace}>
+      <div className={styles.workspaceHeading}>
+        <div>
+          <h3>Members</h3>
+          <p>Know the person behind the membership.</p>
+        </div>
+        <span className={styles.memberLabel}>
+          <UsersRound size={14} /> Member directory
+        </span>
+      </div>
+      <div className={styles.memberLayout}>
+        <div className={styles.directory}>
+          <div className={styles.directoryToolbar}>
+            <div className={styles.search}>
+              <Search size={13} /> Search members
+            </div>
+            <span>
+              All memberships <ChevronDown size={12} />
+            </span>
+          </div>
+          <div className={styles.tableHeading}>
+            <span>Member</span>
+            <span>Package</span>
+            <span>Status</span>
+          </div>
+          {[
+            ["JA", "Jordan A.", "Monthly", "Active", "copper"],
+            ["MR", "Maya R.", "Quarterly", "Expiring soon", "green"],
+            ["SK", "Sam K.", "Annual", "Active", "blue"],
+            ["AM", "Alex M.", "Monthly", "Active", "purple"],
+          ].map(([initials, name, plan, status, color], i) => (
+            <div
+              key={name}
+              className={`${styles.memberRow} ${i === 0 ? styles.highlightMember : ""}`}
+            >
+              <div>
+                <Avatar initials={initials} color={color} />
+                <strong>{name}</strong>
+              </div>
+              <span>
+                {plan}
+                <small>membership</small>
+              </span>
+              <b className={status === "Active" ? styles.status : styles.pending}>
+                {status}
+              </b>
+            </div>
+          ))}
+          <div className={styles.scheduleNote}>
+            <ShieldCheck size={14} /> Membership details and conversation history,
+            together.
+          </div>
+        </div>
+        <aside className={styles.memberDetail}>
+          <div className={styles.detailKicker}>
+            Member profile <MoreHorizontal size={16} />
+          </div>
+          <div className={styles.memberIdentity}>
+            <Avatar initials="JA" large />
+            <div>
+              <h4>Jordan A.</h4>
+              <span>Monthly membership</span>
             </div>
           </div>
-          <aside className="hidden border-l border-white/[0.08] p-6 md:block">
-            <p className="text-[8px] tracking-[0.2em] text-[#73757a] uppercase">
-              Lifecycle connected
-            </p>
-            <div className="mt-7 space-y-5">
-              {[
-                "Conversation retained",
-                "Visit attached",
-                "Membership history",
-                "Follow-up available",
-              ].map((item) => (
-                <div
-                  key={item}
-                  className="flex items-center gap-3 border-b border-white/[0.07] pb-4 text-[9px] text-[#aba8a4]"
-                >
-                  <span className="grid size-4 place-items-center border border-[#a25f3d]/55 text-[#e19764]">
-                    <Check className="size-2.5" />
+          <div className={styles.membershipCard}>
+            <span>Membership</span>
+            <strong>Monthly</strong>
+            <b className={styles.status}>Active</b>
+          </div>
+          <p className={styles.eyebrow}>The journey so far</p>
+          <div className={styles.timeline}>
+            {[
+              [MessageSquare, "First conversation", "Asked about a gym visit"],
+              [CalendarDays, "Visit booked", "Downtown · 6:00 PM"],
+              [UserRoundCheck, "Membership active", "Monthly membership"],
+            ].map(([Icon, title, text]) => {
+              const StepIcon = Icon as typeof MessageSquare;
+              return (
+                <div key={String(title)}>
+                  <span>
+                    <StepIcon size={14} />
                   </span>
-                  {item}
+                  <p>
+                    <strong>{String(title)}</strong>
+                    <small>{String(text)}</small>
+                  </p>
                 </div>
-              ))}
-            </div>
-          </aside>
-        </div>
+              );
+            })}
+          </div>
+        </aside>
       </div>
     </div>
+  );
+}
+
+const screens = [InboxPreview, BookingsPreview, MembersPreview];
+const clamp = (value: number) => Math.max(0, Math.min(1, value));
+
+function ScrollPanel({
+  index,
+  progress,
+  active,
+  reducedMotion,
+}: {
+  index: number;
+  progress: MotionValue<number>;
+  active: number;
+  reducedMotion: boolean;
+}) {
+  const opacity = useTransform(progress, (value) => {
+    if (index === 0) return 1 - clamp((value - 0.3) / 0.06);
+    if (index === 1)
+      return Math.min(clamp((value - 0.3) / 0.06), 1 - clamp((value - 0.63) / 0.06));
+    return clamp((value - 0.63) / 0.06);
+  });
+  const shift = useTransform(opacity, [0, 1], [12, 0]);
+  const Screen = screens[index];
+  return (
+    <motion.div
+      id={`product-panel-${index}`}
+      role="tabpanel"
+      aria-labelledby={`product-tab-${index}`}
+      aria-hidden={active !== index}
+      inert={active !== index}
+      className={styles.scrollPanel}
+      style={
+        reducedMotion ? { opacity: active === index ? 1 : 0 } : { opacity, y: shift }
+      }
+    >
+      <Screen />
+    </motion.div>
   );
 }
 
 export function ProductStory() {
-  const sectionRef = useRef<HTMLElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [active, setActive] = useState(0);
   const reducedMotion = Boolean(useReducedMotion());
   const { scrollYProgress } = useScroll({
-    target: sectionRef,
-    offset: ["start start", "end end"],
+    target: trackRef,
+    offset: ["start 96px", "end end"],
   });
-  const x = useTransform(
-    scrollYProgress,
-    [0, 0.2, 0.38, 0.52, 0.7, 1],
-    ["0%", "0%", "-33.333%", "-33.333%", "-66.666%", "-66.666%"],
-  );
-  const captionOpacity = useTransform(
-    scrollYProgress,
-    [0, 0.02, 0.86, 1],
-    [1, 1, 1, 0],
-  );
+  const progress = useSpring(scrollYProgress, {
+    stiffness: 220,
+    damping: 38,
+    mass: 0.35,
+  });
+  useMotionValueEvent(progress, "change", (value) => {
+    if (!reducedMotion) setActive(value < 0.33 ? 0 : value < 0.66 ? 1 : 2);
+  });
+  // Each reveal is a position on the scroll track, never a timed playback.
+  const inquiry = useTransform(progress, [0, 0.045], [0, 1]);
+  const reply = useTransform(progress, [0.06, 0.105], [0, 1]);
+  const confirmation = useTransform(progress, [0.12, 0.16], [0, 1]);
+  const booking = useTransform(progress, [0.18, 0.235], [0, 1]);
+  const visit = useTransform(progress, [0.37, 0.44], [0, 1]);
+  const context = useTransform(progress, [0.46, 0.54], [0, 1]);
+  const member = useTransform(progress, [0.7, 0.76], [0, 1]);
+  const history = useTransform(progress, [0.78, 0.88], [0, 1]);
+  const revealStyle = reducedMotion
+    ? undefined
+    : ({
+        "--inquiry": inquiry,
+        "--reply": reply,
+        "--confirmation": confirmation,
+        "--booking": booking,
+        "--visit": visit,
+        "--context": context,
+        "--member": member,
+        "--history": history,
+      } as MotionStyle);
 
-  if (reducedMotion) {
-    return (
-      <section
-        id="product-system"
-        className="scroll-mt-24 bg-[#e8e0d6] px-5 py-24 text-[#171311] md:px-12 md:py-32"
-      >
-        <div className="mx-auto max-w-7xl">
-          <p className="text-[9px] font-semibold tracking-[0.32em] text-[#9c5837] uppercase">
-            Real Kroway product
-          </p>
-          <h2 className="font-display mt-5 max-w-[13ch] text-[clamp(3rem,5.5vw,5.6rem)] leading-[0.86] font-black tracking-[-0.065em] uppercase">
-            A working system behind every reply.
-          </h2>
-          <div className="mt-12 h-[34rem] overflow-hidden border border-black/15">
-            <InboxScreen />
-          </div>
-        </div>
-      </section>
-    );
+  function select(index: number) {
+    if (reducedMotion) {
+      setActive(index);
+      return;
+    }
+    const track = trackRef.current;
+    if (!track) return;
+    const start = track.getBoundingClientRect().top + window.scrollY - 96;
+    const travel = track.offsetHeight - window.innerHeight + 96;
+    window.scrollTo({
+      top: start + travel * [0.25, 0.57, 0.93][index],
+      behavior: "smooth",
+    });
   }
-
+  function onTabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const next =
+      event.key === "ArrowRight"
+        ? (index + 1) % 3
+        : event.key === "ArrowLeft"
+          ? (index + 2) % 3
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? 2
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    select(next);
+    tabRefs.current[next]?.focus();
+  }
+  const chapter = chapters[active];
   return (
     <section
-      ref={sectionRef}
       id="product-system"
-      className="relative h-[300svh] scroll-mt-24 bg-[#e8e0d6] text-[#171311]"
+      aria-labelledby="product-story-title"
+      className={styles.section}
+      data-scroll-story={!reducedMotion}
     >
-      <div className="sticky top-0 h-[100svh] overflow-hidden">
-        <motion.div
-          className="absolute inset-x-5 top-20 z-10 md:inset-x-12 md:top-24 lg:inset-x-16"
-          style={{ opacity: captionOpacity }}
-        >
-          <div className="mx-auto flex max-w-[96rem] items-end justify-between gap-8">
-            <div>
-              <p className="text-[8px] font-semibold tracking-[0.32em] text-[#985333] uppercase">
-                Real Kroway product
-              </p>
-              <h2 className="font-display mt-3 max-w-[18ch] text-[clamp(1.8rem,2.8vw,3rem)] leading-[0.92] font-black tracking-[-0.05em] uppercase">
-                WHERE CONVERSATIONS BECOME CUSTOMERS.
-              </h2>
-            </div>
-            <p className="hidden max-w-xs text-sm leading-relaxed text-[#5e5149] md:block">
-              Inbox, lead context, bookings and members stay connected as the customer
-              moves forward.
-            </p>
+      <div className={styles.intro}>
+        <h2 id="product-story-title">
+          Where conversations
+          <br />
+          <span>become customers.</span>
+        </h2>
+        <p className={styles.introCopy}>One customer. Every step connected.</p>
+      </div>
+      <div ref={trackRef} className={styles.scrollTrack}>
+        <div className={styles.stickyStage}>
+          <div className={styles.scrollCaption}>
+            <span>
+              {reducedMotion
+                ? "Explore Jordan’s journey"
+                : "Scroll to follow Jordan’s journey"}
+            </span>
+            {!reducedMotion && <ArrowDown size={14} />}
           </div>
-        </motion.div>
+          <motion.div className={styles.frame} style={revealStyle}>
+            <div className={styles.windowBar}>
+              <div className={styles.windowDots}>
+                <i />
+                <i />
+                <i />
+              </div>
+              <span>Kroway workspace</span>
+              <span className={styles.previewBadge}>Product preview</span>
+            </div>
+            <div className={styles.application}>
+              <aside className={styles.sidebar}>
+                <div className={styles.brand}>
+                  KROWAY<span>WORKSPACE</span>
+                </div>
+                <div className={styles.branch}>
+                  <span className={styles.branchMonogram}>D</span>
+                  <div>
+                    Downtown<span>Gym workspace</span>
+                  </div>
+                  <ChevronDown size={12} />
+                </div>
+                <p className={styles.navLabel}>Workspace</p>
+                <nav aria-label="Product preview navigation">
+                  {[
+                    ["Inbox", Inbox, 0],
+                    ["Leads", UserRoundCheck, -1],
+                    ["Bookings", CalendarDays, 1],
+                    ["Members", UsersRound, 2],
+                    ["Automations", Bot, -1],
+                  ].map(([label, Icon, index]) => {
+                    const NavIcon = Icon as typeof Inbox;
+                    return Number(index) >= 0 ? (
+                      <button
+                        type="button"
+                        key={String(label)}
+                        onClick={() => select(Number(index))}
+                        aria-label={`Show ${String(label)} preview`}
+                        aria-pressed={active === index}
+                        className={active === index ? styles.activeNav : ""}
+                      >
+                        <NavIcon size={16} />
+                        <span>{String(label)}</span>
+                        {active === index && <span className={styles.navDot} />}
+                      </button>
+                    ) : (
+                      <span className={styles.staticNav} key={String(label)}>
+                        <NavIcon size={16} />
+                        <span>{String(label)}</span>
+                      </span>
+                    );
+                  })}
+                </nav>
+                <div className={styles.sidebarBottom}>
+                  <span>
+                    <Settings size={15} /> Settings
+                  </span>
+                  <div>
+                    <Avatar initials="DT" />
+                    <p>
+                      Downtown team<span>Gym administrator</span>
+                    </p>
+                  </div>
+                </div>
+              </aside>
 
-        <div className="absolute inset-x-5 top-[44svh] bottom-8 overflow-hidden border border-black/20 shadow-[0_35px_90px_rgba(36,20,12,.24)] md:inset-x-12 md:top-[44svh] md:bottom-10 lg:inset-x-16">
-          <motion.div className="flex h-full w-[300%]" style={{ x }}>
-            <InboxScreen />
-            <BookingsScreen />
-            <MembersScreen />
+              <div className={styles.main}>
+                <header className={styles.appHeader}>
+                  <div>
+                    Workspace <span>/</span>
+                    <strong>{chapter.label}</strong>
+                  </div>
+                  <span>
+                    <span className={styles.connectionDot} /> WhatsApp connected
+                  </span>
+                </header>
+                <div className={styles.screen}>
+                  {screens.map((_, index) => (
+                    <ScrollPanel
+                      key={index}
+                      index={index}
+                      progress={progress}
+                      active={active}
+                      reducedMotion={reducedMotion}
+                    />
+                  ))}
+                </div>
+                <div className={styles.appStatus}>
+                  <span>
+                    <CheckCheck size={13} /> {chapter.proof}
+                  </span>
+                  <span>Illustrative customer records</span>
+                </div>
+              </div>
+            </div>
+            {!reducedMotion && (
+              <div className={styles.scrollProgress} aria-hidden="true">
+                <motion.span style={{ scaleX: progress }} />
+              </div>
+            )}
           </motion.div>
-        </div>
-
-        <div className="absolute right-5 bottom-3 left-5 flex justify-between text-[7px] tracking-[0.18em] text-[#756157] uppercase md:right-12 md:left-12 lg:right-16 lg:left-16">
-          <span>Conversation</span>
-          <span>Booking</span>
-          <span>Member</span>
+          <div
+            className={styles.chapterNavigation}
+            role="tablist"
+            aria-label="Explore the Kroway workspace"
+          >
+            {chapters.map(({ label, icon: Icon }, index) => (
+              <button
+                key={label}
+                ref={(el) => {
+                  tabRefs.current[index] = el;
+                }}
+                id={`product-tab-${index}`}
+                role="tab"
+                aria-selected={active === index}
+                aria-controls={`product-panel-${index}`}
+                tabIndex={active === index ? 0 : -1}
+                type="button"
+                onClick={() => select(index)}
+                onKeyDown={(event) => onTabKey(event, index)}
+              >
+                <span>0{index + 1}</span>
+                <Icon size={14} />
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className={styles.scrollExplanation}>
+            <h3>{chapter.title}</h3>
+            <p>{chapter.description}</p>
+          </div>
         </div>
       </div>
     </section>

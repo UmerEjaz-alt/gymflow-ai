@@ -16,8 +16,6 @@ type BranchSelectorProps = {
 
 /**
  * Dropdown in the top navigation that lets the owner switch between branches.
- * Hidden when the gym has only one branch — no point cluttering the UI.
- *
  * Changing the branch writes a cookie and reloads the page so all server
  * components re-render with the new branch context.
  *
@@ -31,8 +29,7 @@ export function BranchSelector({ branches, currentBranchId }: BranchSelectorProp
     currentBranchId ?? defaultId,
   );
 
-  // Single-branch gyms don't need a selector
-  if (branches.length <= 1) return null;
+  if (branches.length === 0) return null;
 
   const activeBranch = branches.find((b) => b.id === activeBranchId) ?? branches[0];
   const isUnassigned = activeBranchId === UNASSIGNED_BRANCH_SENTINEL;

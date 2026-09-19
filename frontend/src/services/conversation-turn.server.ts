@@ -128,17 +128,28 @@ export async function processIncomingConversationTurn(
     }
 
     const initialTurn = pipelineResult.knowledge!.turn;
+    const allowedBranchIds =
+      pipelineResult.knowledge?.allBranches?.map((branch) => branch.id) ?? [];
+    const validatedSelectedBranchId =
+      pipelineResult.validatedResponse.selectedBranchId &&
+      allowedBranchIds.includes(pipelineResult.validatedResponse.selectedBranchId) &&
+      pipelineResult.validatedResponse.selectedBranchId ===
+        initialTurn.effectiveBranchId
+        ? pipelineResult.validatedResponse.selectedBranchId
+        : null;
     const semanticJoiningBranchSelection =
       initialTurn.primaryBranchId === null &&
       initialTurn.effectiveBranchId !== null &&
       pipelineResult.validatedResponse.understanding.lead_signal === "high_intent";
-    const resolvedTurn = semanticJoiningBranchSelection
-      ? {
-          ...initialTurn,
-          isTemporaryBranch: false,
-          persistPrimaryBranchId: initialTurn.effectiveBranchId,
-        }
-      : initialTurn;
+    const resolvedTurn =
+      validatedSelectedBranchId || semanticJoiningBranchSelection
+        ? {
+            ...initialTurn,
+            isTemporaryBranch: false,
+            persistPrimaryBranchId:
+              validatedSelectedBranchId ?? initialTurn.effectiveBranchId,
+          }
+        : initialTurn;
     const resolvedBranchSelectionId = resolvedTurn.persistPrimaryBranchId ?? null;
 
     const availableMedia = uniqueMediaAssets([
@@ -216,7 +227,7 @@ export async function processIncomingConversationTurn(
       finalResponse,
       pipelineResult.aiResponse?.model ?? "unknown",
       availableMedia,
-      pipelineResult.knowledge?.allBranches?.map((branch) => branch.id) ?? [],
+      allowedBranchIds,
       resolvedBranchSelectionId,
       persistedTurn,
       Boolean(event.whatsappMessageId),

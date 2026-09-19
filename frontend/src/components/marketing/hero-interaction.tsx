@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  type SyntheticEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type SyntheticEvent, useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 
 export type HeroPhase =
@@ -224,8 +218,7 @@ const messages = [
   { speaker: "Kroway", text: "Absolutely. I can book that for you." },
 ];
 
-const surfacePosition =
-  "absolute right-5 bottom-[11.5svh] left-5 md:right-[4vw] md:bottom-20 md:left-auto md:w-[20rem]";
+const surfacePosition = "absolute inset-x-0 top-0 w-full";
 
 function ConversationSurface({ story }: { story: HeroStoryState }) {
   return (
@@ -262,7 +255,7 @@ function ConversationSurface({ story }: { story: HeroStoryState }) {
                       initial={{ opacity: 0, y: 7 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.36, ease }}
-                      className="grid grid-cols-[3.8rem_1fr] gap-2.5 border-b border-white/[0.07] py-2 md:grid-cols-[4rem_1fr]"
+                      className="grid grid-cols-[3.8rem_1fr] gap-2.5 border-b border-white/[0.07] py-2 md:grid-cols-[4rem_1fr] md:py-1.5"
                     >
                       <span
                         className={`pt-0.5 text-[6px] font-semibold tracking-[0.19em] uppercase ${isKroway ? "text-white/72" : "text-white/34"}`}
@@ -347,7 +340,7 @@ function BookingResult({ story }: { story: HeroStoryState }) {
 
 export function HeroNarrative({ story }: { story: HeroStoryState }) {
   return (
-    <div className="pointer-events-none absolute inset-0 z-30">
+    <div className="pointer-events-none absolute right-5 bottom-[11.5svh] left-5 z-30 h-[15rem] md:top-[calc(48%+6rem)] md:right-[4vw] md:bottom-auto md:left-auto md:w-[24rem]">
       <ConversationSurface story={story} />
       <BookingResult story={story} />
     </div>
