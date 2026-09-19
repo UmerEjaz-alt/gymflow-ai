@@ -38,7 +38,13 @@ export async function processIncomingConversationTurn(
 ): Promise<ProcessConversationTurnResult> {
   const totalStartedAt = performance.now();
   let idempotencyMs = 0;
-  if (event.whatsappMessageId) {
+  const usesTransactionalEndpointIngestion = Boolean(
+    event.whatsappMessageId &&
+    event.endpointId &&
+    event.aiRateLimit &&
+    (event.source ?? "whatsapp") === "whatsapp",
+  );
+  if (event.whatsappMessageId && !usesTransactionalEndpointIngestion) {
     const idempotencyStartedAt = performance.now();
     const existing = await getMessageByWhatsAppMessageId(event.whatsappMessageId);
     idempotencyMs = elapsedMs(idempotencyStartedAt);
@@ -73,6 +79,14 @@ export async function processIncomingConversationTurn(
   }
 
   const context = managerResult.data;
+  if (context.duplicateInbound) {
+    return {
+      customerMessage: context.latestCustomerMessage,
+      aiMessage: null,
+      action: "duplicate",
+      error: null,
+    };
+  }
 
   // Voice-note transcription/download failures are a channel concern, not a
   // customer message for the receptionist model. Persist a concise fallback
@@ -246,6 +260,7 @@ export async function processIncomingConversationTurn(
       allowedBranchIds,
       resolvedBranchSelectionId,
       persistedTurn,
+      Boolean(event.whatsappMessageId),
       Boolean(event.whatsappMessageId),
     );
     const persistenceMs = elapsedMs(persistenceStartedAt);

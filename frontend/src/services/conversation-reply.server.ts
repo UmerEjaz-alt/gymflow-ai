@@ -17,6 +17,7 @@ import type { MediaAsset } from "@/types/media-asset";
 import type { Message } from "@/types/message";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -54,12 +55,30 @@ export async function saveAIReply(
   resolvedBranchSelectionId: string | null = null,
   resolvedTurn: ResolvedTurnContext | null = null,
   queueWhatsAppDelivery = false,
+  atomicWhatsAppTextPersistence = false,
+  concurrencyRetryCount = 0,
+  priorAttemptMs = 0,
 ): Promise<SaveAIReplyResult> {
   const totalStartedAt = performance.now();
   // Guard: skip unapproved responses without writing anything
   if (!response.approved) {
     return { saved: false, error: null };
   }
+
+  // Resolve the authoritative delivery sequence before choosing persistence.
+  // Multi-message/media replies retain their existing ordered insert path.
+  const mediaById = new Map(availableMedia.map((asset) => [asset.id, asset]));
+  const sequence =
+    response.messageSequence.length > 0
+      ? response.messageSequence
+      : [
+          { type: "text" as const, text: response.text },
+          ...response.mediaActions.map((action) => ({
+            type: "image" as const,
+            assetId: action.assetId,
+            caption: action.caption,
+          })),
+        ];
 
   // Step 1: load conversation for memory merge
   const conversationLoadStartedAt = performance.now();
@@ -150,6 +169,108 @@ export async function saveAIReply(
     conversationUpdatePayload.branch_id = branchIdToPersist;
   }
 
+  const atomicTextItem =
+    queueWhatsAppDelivery &&
+    atomicWhatsAppTextPersistence &&
+    sequence.length === 1 &&
+    sequence[0]?.type === "text"
+      ? sequence[0]
+      : null;
+  if (atomicTextItem) {
+    const attachPendingMedia = response.pendingMedia !== null;
+    const messageMetadata = {
+      model,
+      understanding: response.understanding,
+      fallback_used: response.usedFallback,
+      outbound_delivery: "whatsapp_outbox",
+      ...(attachPendingMedia ? { pending_media: response.pendingMedia } : {}),
+      ...(resolvedTurn
+        ? {
+            turn_context: {
+              effective_branch_id: resolvedTurn.effectiveBranchId,
+              is_temporary_branch: resolvedTurn.isTemporaryBranch,
+              intent: resolvedTurn.intent,
+              entity: resolvedTurn.entity,
+            },
+          }
+        : {}),
+    };
+    const atomicStartedAt = performance.now();
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.rpc("persist_whatsapp_ai_text_reply", {
+      p_conversation_id: conversationId,
+      p_expected_updated_at: conversationResult.data.updated_at,
+      p_latest_understanding: conversationUpdatePayload.latest_understanding ?? null,
+      p_update_customer_memory: Object.prototype.hasOwnProperty.call(
+        conversationUpdatePayload,
+        "customer_memory",
+      ),
+      p_customer_memory: conversationUpdatePayload.customer_memory ?? null,
+      p_lead_stage: conversationUpdatePayload.lead_stage ?? null,
+      p_ai_lead_at: conversationUpdatePayload.ai_lead_at ?? null,
+      p_update_branch: Object.prototype.hasOwnProperty.call(
+        conversationUpdatePayload,
+        "branch_id",
+      ),
+      p_branch_id: conversationUpdatePayload.branch_id ?? null,
+      p_last_message_at: conversationUpdatePayload.last_message_at,
+      p_content: atomicTextItem.text,
+      p_metadata: messageMetadata,
+    });
+    const atomicMs = elapsedMs(atomicStartedAt);
+    const row = Array.isArray(data) ? data[0] : null;
+    if (error || !row) {
+      return {
+        saved: false,
+        error: `Failed to persist atomic AI reply: ${error?.message ?? "No result returned."}`,
+      };
+    }
+    if (row.outcome === "conflict" && concurrencyRetryCount < 1) {
+      return saveAIReply(
+        conversationId,
+        response,
+        model,
+        availableMedia,
+        allowedBranchIds,
+        resolvedBranchSelectionId,
+        resolvedTurn,
+        queueWhatsAppDelivery,
+        atomicWhatsAppTextPersistence,
+        concurrencyRetryCount + 1,
+        priorAttemptMs + elapsedMs(totalStartedAt),
+      );
+    }
+    if (row.outcome !== "saved" || !row.message_row) {
+      return {
+        saved: false,
+        error:
+          row.outcome === "conflict"
+            ? "Conversation changed while saving the AI reply."
+            : "Conversation was unavailable while saving the AI reply.",
+      };
+    }
+    const savedMessage = row.message_row as Message;
+    logPerformance("ai.reply_persistence", {
+      conversation_load_ms: conversationLoadMs,
+      memory_merge_ms: memoryMergeMs,
+      conversation_update_ms: Number(row.conversation_update_ms ?? 0),
+      message_insert_ms: Number(row.message_insert_ms ?? 0),
+      slowest_message_insert_ms: Number(row.message_insert_ms ?? 0),
+      atomic_rpc_ms: atomicMs,
+      message_insert_count: 1,
+      queues_whatsapp_delivery: true,
+      optimistic_retry_count: concurrencyRetryCount,
+      round_trip_count: 2,
+      total_ms: priorAttemptMs + elapsedMs(totalStartedAt),
+    });
+    return {
+      saved: true,
+      error: null,
+      messageId: savedMessage.id,
+      messages: [savedMessage],
+    };
+  }
+
   const conversationUpdateStartedAt = performance.now();
   const preSaveConversationUpdate = await updateConversation(
     conversationId,
@@ -165,18 +286,6 @@ export async function saveAIReply(
   }
 
   // Persist one deterministic channel-neutral sequence. Unknown assets are ignored.
-  const mediaById = new Map(availableMedia.map((asset) => [asset.id, asset]));
-  const sequence =
-    response.messageSequence.length > 0
-      ? response.messageSequence
-      : [
-          { type: "text" as const, text: response.text },
-          ...response.mediaActions.map((action) => ({
-            type: "image" as const,
-            assetId: action.assetId,
-            caption: action.caption,
-          })),
-        ];
   const savedMessages: Message[] = [];
   let pendingMediaAttached = false;
   let messageInsertMs = 0;
@@ -241,7 +350,10 @@ export async function saveAIReply(
     slowest_message_insert_ms: slowestMessageInsertMs,
     message_insert_count: savedMessages.length,
     queues_whatsapp_delivery: queueWhatsAppDelivery,
-    total_ms: elapsedMs(totalStartedAt),
+    atomic_rpc_ms: 0,
+    optimistic_retry_count: concurrencyRetryCount,
+    round_trip_count: 2 + savedMessages.length,
+    total_ms: priorAttemptMs + elapsedMs(totalStartedAt),
   });
 
   return {

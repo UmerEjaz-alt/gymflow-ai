@@ -5,6 +5,7 @@ import type {
   WhatsAppEndpoint,
 } from "@/types/whatsapp-endpoint";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import type { Message } from "@/types/message";
 
 type Result<T> = { data: T; error: null } | { data: null; error: string };
 
@@ -14,6 +15,57 @@ export type ResolvedWhatsAppDestination = {
   /** Nullable: null for shared gym endpoints; non-null for dedicated branch endpoints. */
   branchId: string | null;
 };
+
+export type WhatsAppInboundPreflight = {
+  destination: ResolvedWhatsAppDestination | null;
+  existingMessage: Message | null;
+  timings: {
+    endpointResolutionMs: number;
+    idempotencyMs: number;
+  };
+};
+
+/**
+ * Resolves one inbound destination and performs the first duplicate lookup in
+ * one service-role database transaction.
+ */
+export async function prepareWhatsAppInbound(input: {
+  phoneNumberId: string | null;
+  displayPhone: string | null;
+  whatsappMessageId: string;
+}): Promise<Result<WhatsAppInboundPreflight>> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("prepare_whatsapp_inbound", {
+    p_phone_number_id: input.phoneNumberId,
+    p_display_phone_number: input.displayPhone,
+    p_whatsapp_message_id: input.whatsappMessageId,
+  });
+  const row = Array.isArray(data) ? data[0] : null;
+  if (error || !row) {
+    return {
+      data: null,
+      error: error?.message ?? "WhatsApp inbound preflight was unavailable.",
+    };
+  }
+
+  return {
+    data: {
+      destination: row.gym_id
+        ? {
+            gymId: String(row.gym_id),
+            endpointId: row.endpoint_id ? String(row.endpoint_id) : null,
+            branchId: row.branch_id ? String(row.branch_id) : null,
+          }
+        : null,
+      existingMessage: row.existing_message as Message | null,
+      timings: {
+        endpointResolutionMs: Number(row.endpoint_resolution_ms ?? 0),
+        idempotencyMs: Number(row.idempotency_ms ?? 0),
+      },
+    },
+    error: null,
+  };
+}
 
 /**
  * Resolves the incoming WhatsApp message destination to a gym, endpoint, and branch.

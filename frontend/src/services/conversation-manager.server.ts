@@ -11,8 +11,13 @@ import {
   getConversationByPhone,
   updateConversation,
 } from "@/services/conversation.server";
-import { createMessage, listRecentMessages } from "@/services/message.server";
+import {
+  createMessage,
+  getMessageByWhatsAppMessageId,
+  listRecentMessages,
+} from "@/services/message.server";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -46,6 +51,14 @@ export type IncomingMessageEvent = {
   safeFallbackReplyText?: string | null;
   /** Persist the inbound message but do not invoke an expensive model call. */
   suppressAI?: boolean;
+  /** Hashed durable AI budgets consumed inside established ingestion. */
+  aiRateLimit?: {
+    customerBucket: string;
+    customerLimit: number;
+    gymBucket: string;
+    gymLimit: number;
+    windowSeconds: number;
+  };
 };
 
 /**
@@ -61,6 +74,8 @@ export type ConversationContext = {
   leadStage: LeadStage;
   status: ConversationStatus;
   latestCustomerMessage: Message;
+  /** Set by the transactional ingestion boundary when another worker won. */
+  duplicateInbound?: boolean;
   /** Present only for a proactive automation-generated turn. */
   automationInstruction?: string;
 };
@@ -70,6 +85,80 @@ export type ConversationContext = {
 // ---------------------------------------------------------------------------
 
 const LATEST_MESSAGES_LIMIT = 20;
+
+type EstablishedIngestionResult = {
+  outcome: "inserted" | "duplicate" | "not_established";
+  conversation: Conversation | null;
+  message: Message | null;
+  recentMessages: Message[];
+  timings: {
+    lookupMs: number;
+    persistenceMs: number;
+    updateMs: number;
+    historyMs: number;
+    rateLimitMs: number;
+  };
+  customerAllowed: boolean | null;
+  gymAllowed: boolean | null;
+};
+
+async function ingestEstablishedWhatsAppMessage(
+  event: IncomingMessageEvent,
+  now: string,
+): Promise<
+  { data: EstablishedIngestionResult; error: null } | { data: null; error: string }
+> {
+  const aiRateLimit = event.aiRateLimit;
+  if (!aiRateLimit) {
+    return { data: null, error: "Durable AI rate-limit input is missing." };
+  }
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("ingest_established_whatsapp_message", {
+    p_gym_id: event.gymId,
+    p_endpoint_id: event.endpointId,
+    p_customer_bucket: aiRateLimit.customerBucket,
+    p_customer_limit: aiRateLimit.customerLimit,
+    p_gym_bucket: aiRateLimit.gymBucket,
+      p_gym_limit: aiRateLimit.gymLimit,
+      p_window_seconds: aiRateLimit.windowSeconds,
+      p_customer_phone: event.customerPhone,
+      p_message_type: event.messageType,
+    p_content: event.content,
+    p_whatsapp_message_id: event.whatsappMessageId,
+    p_metadata: event.metadata ?? {},
+    p_last_message_at: now,
+    p_history_limit: LATEST_MESSAGES_LIMIT,
+  });
+  const row = Array.isArray(data) ? data[0] : null;
+  if (error || !row) {
+    return {
+      data: null,
+      error: error?.message ?? "Established WhatsApp ingestion was unavailable.",
+    };
+  }
+
+  return {
+    data: {
+      outcome: row.outcome as EstablishedIngestionResult["outcome"],
+      conversation: row.conversation_row as Conversation | null,
+      message: row.message_row as Message | null,
+      recentMessages: Array.isArray(row.recent_messages)
+        ? (row.recent_messages as Message[])
+        : [],
+      timings: {
+        lookupMs: Number(row.conversation_lookup_ms ?? 0),
+        persistenceMs: Number(row.inbound_persistence_ms ?? 0),
+        updateMs: Number(row.conversation_update_ms ?? 0),
+        historyMs: Number(row.history_load_ms ?? 0),
+        rateLimitMs: Number(row.rate_limit_ms ?? 0),
+      },
+      customerAllowed:
+        typeof row.customer_allowed === "boolean" ? row.customer_allowed : null,
+      gymAllowed: typeof row.gym_allowed === "boolean" ? row.gym_allowed : null,
+    },
+    error: null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Orchestration — inbound message
@@ -106,6 +195,106 @@ export async function handleIncomingMessage(
     metadata,
   } = event;
   const now = new Date().toISOString();
+  let effectiveSuppressAI = Boolean(event.suppressAI);
+
+  if (source === "whatsapp" && endpointId && whatsappMessageId && event.aiRateLimit) {
+    const fastPathStartedAt = performance.now();
+    const fastPath = await ingestEstablishedWhatsAppMessage(event, now);
+    const fastPathMs = elapsedMs(fastPathStartedAt);
+    if (fastPath.error || !fastPath.data) {
+      return {
+        data: null,
+        error: `Established WhatsApp ingestion failed: ${fastPath.error}`,
+      };
+    }
+    const rateLimitWasConsumed =
+      fastPath.data.customerAllowed !== null && fastPath.data.gymAllowed !== null;
+    if (rateLimitWasConsumed) {
+      const allowed =
+        fastPath.data.customerAllowed === true && fastPath.data.gymAllowed === true;
+      logPerformance("whatsapp.rate_limit", {
+        scope: "ai",
+        allowed,
+        consolidated_ingestion: true,
+        total_ms: fastPath.data.timings.rateLimitMs,
+      });
+      effectiveSuppressAI ||= !allowed;
+    }
+    if (
+      fastPath.data.outcome !== "not_established" &&
+      fastPath.data.conversation &&
+      fastPath.data.message
+    ) {
+      const conversation = fastPath.data.conversation;
+      const duplicateInbound = fastPath.data.outcome === "duplicate";
+      logPerformance("whatsapp.conversation_load", {
+        source,
+        message_type: messageType,
+        established_fast_path: true,
+        duplicate: duplicateInbound,
+        conversation_lookup_ms: fastPath.data.timings.lookupMs,
+        conversation_create_ms: 0,
+        route_stamp_ms: 0,
+        inbound_persistence_ms: fastPath.data.timings.persistenceMs,
+        conversation_update_ms: fastPath.data.timings.updateMs,
+        history_load_ms: fastPath.data.timings.historyMs,
+        history_rows_loaded: fastPath.data.recentMessages.length,
+        history_rows_used: fastPath.data.recentMessages.length,
+        total_ms: fastPathMs,
+      });
+      return {
+        data: {
+          conversation,
+          latestMessages: fastPath.data.recentMessages,
+          shouldCallAI:
+            !duplicateInbound &&
+            !effectiveSuppressAI &&
+            conversation.ai_enabled &&
+            conversation.status === "active",
+          humanTakeover: conversation.status === "human",
+          leadStage: conversation.lead_stage,
+          status: conversation.status,
+          latestCustomerMessage: fastPath.data.message,
+          duplicateInbound,
+        },
+        error: null,
+      };
+    }
+
+    // New endpoint conversations retain the existing creation/fallback path.
+    // Recheck immediately before that path so the second idempotency boundary
+    // is not lost if another worker created the conversation meanwhile.
+    const existing = await getMessageByWhatsAppMessageId(whatsappMessageId);
+    if (existing.error) {
+      return {
+        data: null,
+        error: `Webhook idempotency lookup failed: ${existing.error}`,
+      };
+    }
+    if (existing.data) {
+      const conversationResult = await getConversation(existing.data.conversation_id);
+      if (conversationResult.error || !conversationResult.data) {
+        return {
+          data: null,
+          error: conversationResult.error ?? "Duplicate conversation was unavailable.",
+        };
+      }
+      const conversation = conversationResult.data;
+      return {
+        data: {
+          conversation,
+          latestMessages: [],
+          shouldCallAI: false,
+          humanTakeover: conversation.status === "human",
+          leadStage: conversation.lead_stage,
+          status: conversation.status,
+          latestCustomerMessage: existing.data,
+          duplicateInbound: true,
+        },
+        error: null,
+      };
+    }
+  }
 
   // ── Step 1: Resolve or create the conversation ───────────────────────────
   const lookupStartedAt = performance.now();
@@ -194,10 +383,7 @@ export async function handleIncomingMessage(
   // can share one network round trip without changing persistence ordering.
   const historyPromise = (async () => {
     const startedAt = performance.now();
-    const result = await listRecentMessages(
-      conversation.id,
-      LATEST_MESSAGES_LIMIT,
-    );
+    const result = await listRecentMessages(conversation.id, LATEST_MESSAGES_LIMIT);
     return { result, elapsedMs: elapsedMs(startedAt) };
   })();
 
@@ -240,7 +426,7 @@ export async function handleIncomingMessage(
       conversation,
       latestMessages,
       shouldCallAI:
-        !event.suppressAI &&
+        !effectiveSuppressAI &&
         conversation.ai_enabled &&
         conversation.status === "active",
       humanTakeover: conversation.status === "human",

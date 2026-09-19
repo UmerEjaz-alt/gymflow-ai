@@ -1,10 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { processIncomingConversationTurn } from "@/services/conversation-turn.server";
-import { resolveWhatsAppEndpoint } from "@/services/whatsapp-endpoint.server";
+import { prepareWhatsAppInbound } from "@/services/whatsapp-endpoint.server";
 import { runWithSystemSupabase } from "@/lib/supabase/request-context";
 import { normalizeIncomingMessageWebhooks } from "@/services/whatsapp-normalizer";
-import { getMessageByWhatsAppMessageId } from "@/services/message.server";
 import { downloadWhatsAppAudio } from "@/services/whatsapp-cloud-api.server";
 import { transcribeWhatsAppVoiceNote } from "@/services/gemini-transcription.server";
 import { verifyWhatsAppWebhookSignature } from "@/lib/whatsapp-webhook-auth.server";
@@ -127,28 +126,43 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let retryRequested = false;
   for (const event of events) {
     const result = await runWithSystemSupabase(async () => {
-      const destination = await resolveWhatsAppEndpoint(
-        event.recipientPhoneNumberId,
-        event.recipientDisplayPhone,
-      );
-      if (destination.error) return { error: destination.error };
-      if (!destination.data) {
+      const preflightStartedAt = performance.now();
+      const preflight = await prepareWhatsAppInbound({
+        phoneNumberId: event.recipientPhoneNumberId,
+        displayPhone: event.recipientDisplayPhone,
+        whatsappMessageId: event.whatsappMessageId,
+      });
+      const preflightMs = elapsedMs(preflightStartedAt);
+      if (preflight.error || !preflight.data) return { error: preflight.error };
+      const destination = preflight.data.destination;
+      logPerformance("whatsapp.pre_turn", {
+        destination_mapped: Boolean(destination),
+        duplicate: Boolean(preflight.data.existingMessage),
+        round_trip_count: 1,
+        total_ms: preflightMs,
+      });
+      logPerformance("whatsapp.endpoint_resolution", {
+        outcome: destination ? "resolved" : "unmapped",
+        shared_endpoint: destination ? destination.branchId === null : null,
+        consolidated_preflight: true,
+        network_total_ms: preflightMs,
+        total_ms: preflight.data.timings.endpointResolutionMs,
+      });
+      logPerformance("whatsapp.idempotency_lookup", {
+        duplicate: Boolean(preflight.data.existingMessage),
+        consolidated_preflight: true,
+        total_ms: preflight.data.timings.idempotencyMs,
+      });
+      if (!destination) {
         return { error: "Unmapped WhatsApp destination." };
       }
 
       // Check every supported type before consuming cost budget. A duplicate
       // webhook becomes an opportunity to recover its previously queued reply.
-      const idempotencyStartedAt = performance.now();
-      const existing = await getMessageByWhatsAppMessageId(event.whatsappMessageId);
-      logPerformance("whatsapp.idempotency_lookup", {
-        duplicate: Boolean(existing.data),
-        total_ms: elapsedMs(idempotencyStartedAt),
-      });
-      if (existing.error) return { error: existing.error };
-      if (existing.data) {
+      if (preflight.data.existingMessage) {
         return {
           result: {
-            customerMessage: existing.data,
+            customerMessage: preflight.data.existingMessage,
             aiMessage: null,
             action: "duplicate",
             error: null,
@@ -157,35 +171,57 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       let suppressAI = false;
+      let aiRateLimit: {
+        customerBucket: string;
+        customerLimit: number;
+        gymBucket: string;
+        gymLimit: number;
+        windowSeconds: number;
+      };
       try {
-        const rateLimitStartedAt = performance.now();
-        const [customerBudget, gymBudget] = await Promise.all([
-          consumeDurableRateLimit({
-            bucket: rateLimitBucket(
-              "whatsapp-ai-customer",
-              destination.data.gymId,
-              event.customerPhone,
-            ),
-            limit: AI_CUSTOMER_LIMIT,
-            windowSeconds: AI_WINDOW_SECONDS,
-          }),
-          consumeDurableRateLimit({
-            bucket: rateLimitBucket("whatsapp-ai-gym", destination.data.gymId),
-            limit: AI_GYM_LIMIT,
-            windowSeconds: AI_WINDOW_SECONDS,
-          }),
-        ]);
-        logPerformance("whatsapp.rate_limit", {
-          scope: "ai",
-          allowed: customerBudget.allowed && gymBudget.allowed,
-          total_ms: elapsedMs(rateLimitStartedAt),
-        });
-        if (customerBudget.error || gymBudget.error) {
-          return { error: "Durable AI rate limiter is unavailable." };
-        }
-        suppressAI = !customerBudget.allowed || !gymBudget.allowed;
+        aiRateLimit = {
+          customerBucket: rateLimitBucket(
+            "whatsapp-ai-customer",
+            destination.gymId,
+            event.customerPhone,
+          ),
+          customerLimit: AI_CUSTOMER_LIMIT,
+          gymBucket: rateLimitBucket("whatsapp-ai-gym", destination.gymId),
+          gymLimit: AI_GYM_LIMIT,
+          windowSeconds: AI_WINDOW_SECONDS,
+        };
       } catch {
         return { error: "Durable AI rate limiter is not configured." };
+      }
+      const consolidateAIRateLimit =
+        event.messageType !== "audio" && destination.endpointId !== null;
+      if (!consolidateAIRateLimit) {
+        try {
+          const rateLimitStartedAt = performance.now();
+          const [customerBudget, gymBudget] = await Promise.all([
+            consumeDurableRateLimit({
+              bucket: aiRateLimit.customerBucket,
+              limit: aiRateLimit.customerLimit,
+              windowSeconds: aiRateLimit.windowSeconds,
+            }),
+            consumeDurableRateLimit({
+              bucket: aiRateLimit.gymBucket,
+              limit: aiRateLimit.gymLimit,
+              windowSeconds: aiRateLimit.windowSeconds,
+            }),
+          ]);
+          logPerformance("whatsapp.rate_limit", {
+            scope: "ai",
+            allowed: customerBudget.allowed && gymBudget.allowed,
+            total_ms: elapsedMs(rateLimitStartedAt),
+          });
+          if (customerBudget.error || gymBudget.error) {
+            return { error: "Durable AI rate limiter is unavailable." };
+          }
+          suppressAI = !customerBudget.allowed || !gymBudget.allowed;
+        } catch {
+          return { error: "Durable AI rate limiter is not configured." };
+        }
       }
 
       let content = event.content;
@@ -204,14 +240,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             consumeDurableRateLimit({
               bucket: rateLimitBucket(
                 "whatsapp-voice-customer",
-                destination.data.gymId,
+                destination.gymId,
                 event.customerPhone,
               ),
               limit: VOICE_CUSTOMER_LIMIT,
               windowSeconds: VOICE_WINDOW_SECONDS,
             }),
             consumeDurableRateLimit({
-              bucket: rateLimitBucket("whatsapp-voice-gym", destination.data.gymId),
+              bucket: rateLimitBucket("whatsapp-voice-gym", destination.gymId),
               limit: VOICE_GYM_LIMIT,
               windowSeconds: VOICE_WINDOW_SECONDS,
             }),
@@ -271,9 +307,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const turnStartedAt = performance.now();
       const turnResult = await processIncomingConversationTurn({
-        gymId: destination.data.gymId,
-        endpointId: destination.data.endpointId,
-        branchId: destination.data.branchId,
+        gymId: destination.gymId,
+        endpointId: destination.endpointId,
+        branchId: destination.branchId,
         customerPhone: event.customerPhone,
         customerName: event.customerName,
         source: "whatsapp",
@@ -283,6 +319,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         metadata,
         safeFallbackReplyText,
         suppressAI,
+        aiRateLimit: consolidateAIRateLimit ? aiRateLimit : undefined,
       });
       logPerformance("whatsapp.turn_processing", {
         message_type: event.messageType,

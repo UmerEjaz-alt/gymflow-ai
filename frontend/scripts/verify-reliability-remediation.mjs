@@ -46,6 +46,13 @@ const finalizationMigration = await readFile(
   ),
   "utf8",
 );
+const latencyMigration = await readFile(
+  new URL(
+    "../../supabase/migrations/20250101000029_reduce_whatsapp_network_waves.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(migration, /for update skip locked/i);
 assert.match(migration, /d\.status = 'processing' and d\.lease_expires_at <= now\(\)/i);
 assert.match(migration, /set status = 'sending'/i);
@@ -74,6 +81,14 @@ assert.match(
 assert.match(
   finalizationMigration,
   /from public, anon, authenticated[\s\S]*to service_role/i,
+);
+assert.match(latencyMigration, /public\.consume_rate_limit\(/i);
+assert.match(latencyMigration, /on conflict \(whatsapp_message_id\)[\s\S]*do nothing/i);
+assert.match(latencyMigration, /p_expected_updated_at/i);
+assert.match(latencyMigration, /for update/i);
+assert.match(
+  latencyMigration,
+  /revoke all on function public\.ingest_established_whatsapp_message[\s\S]*to service_role/i,
 );
 
 const automationRunner = await readFile(
