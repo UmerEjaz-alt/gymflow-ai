@@ -39,6 +39,13 @@ const migration = await readFile(
   ),
   "utf8",
 );
+const finalizationMigration = await readFile(
+  new URL(
+    "../../supabase/migrations/20250101000028_finalize_whatsapp_delivery_atomically.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(migration, /for update skip locked/i);
 assert.match(migration, /d\.status = 'processing' and d\.lease_expires_at <= now\(\)/i);
 assert.match(migration, /set status = 'sending'/i);
@@ -58,6 +65,16 @@ assert.match(migration, /primary key \(bucket_key, window_started_at\)/i);
 assert.match(migration, /request_count = rate_limit_buckets\.request_count \+ 1/i);
 assert.match(migration, /not exists \(select 1 from endpoint_matches\)/i);
 assert.match(migration, /where e\.is_active = true/i);
+assert.match(finalizationMigration, /and status = 'sending'/i);
+assert.match(finalizationMigration, /and claim_token = p_claim_token/i);
+assert.match(
+  finalizationMigration,
+  /update public\.messages[\s\S]*whatsapp_message_id = p_meta_message_id/i,
+);
+assert.match(
+  finalizationMigration,
+  /from public, anon, authenticated[\s\S]*to service_role/i,
+);
 
 const automationRunner = await readFile(
   new URL("../src/services/automation-runner.server.ts", import.meta.url),

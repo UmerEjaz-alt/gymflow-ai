@@ -7,6 +7,7 @@ import type {
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { Message } from "@/types/message";
 import { normalizeConversationMessagePreviews } from "@/lib/conversation-message-query";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
 export type ConversationWithMessagePreview = Conversation & { messages: Message[] };
@@ -44,10 +45,25 @@ export async function getConversationByPhone(
   endpointId?: string | null,
   branchId?: string | null,
 ): Promise<ServiceResult<Conversation | null>> {
+  const totalStartedAt = performance.now();
   const supabase = await createServerSupabaseClient();
+  let endpointQueryMs = 0;
+  let branchQueryMs = 0;
+  let fallbackQueryMs = 0;
+  let queryCount = 0;
+  const logLookup = (outcome: string) =>
+    logPerformance("whatsapp.conversation_lookup", {
+      outcome,
+      query_count: queryCount,
+      endpoint_query_ms: endpointQueryMs,
+      branch_query_ms: branchQueryMs,
+      fallback_query_ms: fallbackQueryMs,
+      total_ms: elapsedMs(totalStartedAt),
+    });
 
   // 1. If endpointId is known, try exact match by (gym_id, whatsapp_endpoint_id, customer_phone)
   if (endpointId) {
+    const startedAt = performance.now();
     const { data: endpointMatch, error: epError } = await supabase
       .from("conversations")
       .select("*")
@@ -55,13 +71,22 @@ export async function getConversationByPhone(
       .eq("customer_phone", phone)
       .eq("whatsapp_endpoint_id", endpointId)
       .maybeSingle();
+    endpointQueryMs = elapsedMs(startedAt);
+    queryCount += 1;
 
-    if (epError) return { data: null, error: epError.message };
-    if (endpointMatch) return { data: endpointMatch as Conversation, error: null };
+    if (epError) {
+      logLookup("endpoint_error");
+      return { data: null, error: epError.message };
+    }
+    if (endpointMatch) {
+      logLookup("endpoint_match");
+      return { data: endpointMatch as Conversation, error: null };
+    }
   }
 
   // 2. If branchId is known, check for existing conversation matching that branch
   if (branchId) {
+    const startedAt = performance.now();
     const { data: branchMatch, error: bError } = await supabase
       .from("conversations")
       .select("*")
@@ -69,9 +94,17 @@ export async function getConversationByPhone(
       .eq("customer_phone", phone)
       .eq("branch_id", branchId)
       .maybeSingle();
+    branchQueryMs = elapsedMs(startedAt);
+    queryCount += 1;
 
-    if (bError) return { data: null, error: bError.message };
-    if (branchMatch) return { data: branchMatch as Conversation, error: null };
+    if (bError) {
+      logLookup("branch_error");
+      return { data: null, error: bError.message };
+    }
+    if (branchMatch) {
+      logLookup("branch_match");
+      return { data: branchMatch as Conversation, error: null };
+    }
   }
 
   // 3. Fallback: check for unassigned or general conversation for this phone
@@ -85,12 +118,17 @@ export async function getConversationByPhone(
     query = query.is("branch_id", null);
   }
 
+  const fallbackStartedAt = performance.now();
   const { data, error } = await query.maybeSingle();
+  fallbackQueryMs = elapsedMs(fallbackStartedAt);
+  queryCount += 1;
 
   if (error) {
+    logLookup("fallback_error");
     return { data: null, error: error.message };
   }
 
+  logLookup(data ? "fallback_match" : "not_found");
   return { data: data as Conversation | null, error: null };
 }
 

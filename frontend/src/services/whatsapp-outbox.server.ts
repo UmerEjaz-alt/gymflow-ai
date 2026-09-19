@@ -1,7 +1,6 @@
 import "server-only";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { updateMessage } from "@/services/message.server";
 import {
   sendWhatsAppImage,
   sendWhatsAppText,
@@ -9,6 +8,7 @@ import {
 import type { Message } from "@/types/message";
 import { failureDeliveryPatch } from "@/services/whatsapp-delivery-policy";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { isPersistedMessageForClaim } from "@/lib/whatsapp-delivery-optimization";
 
 type DeliveryRow = {
   id: string;
@@ -96,27 +96,67 @@ async function beginDeliverySend(delivery: DeliveryRow): Promise<boolean> {
   return data === true;
 }
 
-async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
+async function finalizeSuccessfulDelivery(
+  delivery: DeliveryRow,
+  metaMessageId: string,
+  deliveredAt: string,
+): Promise<boolean> {
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("id", delivery.message_id)
-    .maybeSingle();
-  if (error || !data || !delivery.phone_number_id) {
+  const { data, error } = await supabase.rpc("finalize_whatsapp_outbound_delivery", {
+    p_delivery_id: delivery.id,
+    p_claim_token: delivery.claim_token,
+    p_meta_message_id: metaMessageId,
+    p_sent_at: deliveredAt,
+  });
+  if (error) throw new Error(`Outbound delivery finalization failed: ${error.message}`);
+  return data === true;
+}
+
+async function deliverClaim(
+  delivery: DeliveryRow,
+  persistedMessage?: Message,
+): Promise<DeliveryOutcome> {
+  const messageLoadStartedAt = performance.now();
+  const reusableMessage = isPersistedMessageForClaim(delivery, persistedMessage)
+    ? persistedMessage
+    : null;
+  let data: Message | null = reusableMessage;
+  let messageLoadError: string | null = null;
+  if (!data) {
+    const supabase = await createServerSupabaseClient();
+    const result = await supabase
+      .from("messages")
+      .select("*")
+      .eq("id", delivery.message_id)
+      .maybeSingle();
+    data = result.data as Message | null;
+    messageLoadError = result.error?.message ?? null;
+  }
+  logPerformance("whatsapp.delivery_message_load", {
+    found: Boolean(data),
+    reused_persisted_message: Boolean(reusableMessage),
+    total_ms: elapsedMs(messageLoadStartedAt),
+  });
+  if (messageLoadError || !data || !delivery.phone_number_id) {
+    const failureFinalizeStartedAt = performance.now();
     await finishDelivery(
       delivery,
       {
         status: "failed",
         retryable: false,
-        last_error: error?.message ?? "Outbound message or destination is unavailable.",
+        last_error:
+          messageLoadError ?? "Outbound message or destination is unavailable.",
       },
       "processing",
     );
+    logPerformance("whatsapp.delivery_finalize", {
+      outcome: "failed_before_send",
+      total_ms: elapsedMs(failureFinalizeStartedAt),
+    });
     return "failed";
   }
 
-  const message = data as Message;
+  const message = data;
   const phoneNumberId = delivery.phone_number_id;
   const imageUrl =
     typeof message.metadata?.media_url === "string" ? message.metadata.media_url : null;
@@ -139,6 +179,7 @@ async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
         : null;
 
   if (!send) {
+    const unsupportedFinalizeStartedAt = performance.now();
     await finishDelivery(
       delivery,
       {
@@ -148,13 +189,23 @@ async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
       },
       "processing",
     );
+    logPerformance("whatsapp.delivery_finalize", {
+      outcome: "unsupported_message",
+      total_ms: elapsedMs(unsupportedFinalizeStartedAt),
+    });
     return "failed";
   }
 
   // This durable transition is the external-side-effect boundary. Expired
   // `processing` work is safe to reclaim; expired `sending` work is quarantined
   // as uncertain because Meta may already have accepted it.
-  if (!(await beginDeliverySend(delivery))) return "deferred";
+  const sendBoundaryStartedAt = performance.now();
+  const beganSending = await beginDeliverySend(delivery);
+  logPerformance("whatsapp.delivery_send_boundary", {
+    transitioned: beganSending,
+    total_ms: elapsedMs(sendBoundaryStartedAt),
+  });
+  if (!beganSending) return "deferred";
   const metaSendStartedAt = performance.now();
   const result = await send();
   logPerformance("whatsapp.meta_send", {
@@ -166,21 +217,43 @@ async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
   if (!result.data) {
     const failure = failureDeliveryPatch(result, delivery.attempt_count);
     const { outcome, ...patch } = failure;
+    const failureFinalizeStartedAt = performance.now();
     await finishDelivery(delivery, patch);
+    logPerformance("whatsapp.delivery_finalize", {
+      outcome,
+      total_ms: elapsedMs(failureFinalizeStartedAt),
+    });
     return outcome;
   }
 
   const metaMessageId = result.data.whatsappMessageId;
   const deliveredAt = new Date().toISOString();
-  const completed = await finishDelivery(delivery, {
-    status: "sent",
-    retryable: false,
-    meta_message_id: metaMessageId,
-    sent_at: deliveredAt,
-    last_error: null,
+  const finalizeStartedAt = performance.now();
+  let completed = false;
+  try {
+    completed = await finalizeSuccessfulDelivery(delivery, metaMessageId, deliveredAt);
+  } catch (error) {
+    // Meta accepted the request. A failed/ambiguous database response must
+    // never cause a blind resend; leave the sending lease for reconciliation.
+    console.error("[WhatsApp outbox] accepted send could not be finalized", {
+      deliveryId: delivery.id,
+      messageId: delivery.message_id,
+      error: error instanceof Error ? error.message : "Unknown finalization error.",
+    });
+  }
+  const finalizeMs = elapsedMs(finalizeStartedAt);
+  logPerformance("whatsapp.delivery_finalize", {
+    outcome: completed ? "sent" : "uncertain",
+    message_mirror_atomic: true,
+    total_ms: finalizeMs,
+  });
+  logPerformance("whatsapp.delivery_message_mirror", {
+    saved: completed,
+    atomic_with_finalize: true,
+    total_ms: 0,
   });
   if (!completed) {
-    // Do not resend an accepted Meta request. A processing row is intentionally
+    // Do not resend an accepted Meta request. The sending row is intentionally
     // left for operator reconciliation rather than risking duplicate delivery.
     console.error(
       "[WhatsApp outbox] Meta accepted a send but state was not finalized",
@@ -192,30 +265,18 @@ async function deliverClaim(delivery: DeliveryRow): Promise<DeliveryOutcome> {
     return "uncertain";
   }
 
-  const saved = await updateMessage(message.id, {
-    whatsapp_message_id: metaMessageId,
-    delivered_at: deliveredAt,
-  });
-  if (saved.error) {
-    console.error(
-      "[WhatsApp outbox] Delivery succeeded but message mirror update failed",
-      {
-        deliveryId: delivery.id,
-        messageId: delivery.message_id,
-      },
-    );
-  }
   return "sent";
 }
 
 export async function deliverWhatsAppMessage(
   messageId: string,
+  persistedMessage?: Message,
 ): Promise<DeliveryOutcome> {
   const totalStartedAt = performance.now();
   const claimStartedAt = performance.now();
   const claim = await claimDelivery({ messageId });
   const claimMs = elapsedMs(claimStartedAt);
-  const outcome = claim ? await deliverClaim(claim) : "deferred";
+  const outcome = claim ? await deliverClaim(claim, persistedMessage) : "deferred";
   logPerformance("whatsapp.delivery", {
     claim_ms: claimMs,
     outcome,

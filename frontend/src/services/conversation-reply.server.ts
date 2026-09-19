@@ -16,6 +16,7 @@ import { createMessage } from "@/services/message.server";
 import type { MediaAsset } from "@/types/media-asset";
 import type { Message } from "@/types/message";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
+import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -54,13 +55,16 @@ export async function saveAIReply(
   resolvedTurn: ResolvedTurnContext | null = null,
   queueWhatsAppDelivery = false,
 ): Promise<SaveAIReplyResult> {
+  const totalStartedAt = performance.now();
   // Guard: skip unapproved responses without writing anything
   if (!response.approved) {
     return { saved: false, error: null };
   }
 
   // Step 1: load conversation for memory merge
+  const conversationLoadStartedAt = performance.now();
   const conversationResult = await getConversation(conversationId);
+  const conversationLoadMs = elapsedMs(conversationLoadStartedAt);
   if (conversationResult.error || !conversationResult.data) {
     return {
       saved: false,
@@ -68,6 +72,7 @@ export async function saveAIReply(
     };
   }
 
+  const memoryMergeStartedAt = performance.now();
   const memoryMerge = mergeConversationMemory(
     conversationResult.data.customer_memory,
     response.understanding.memory_updates,
@@ -88,6 +93,7 @@ export async function saveAIReply(
       safeUnderstanding.conversation_stage = "consideration";
     }
   }
+  const memoryMergeMs = elapsedMs(memoryMergeStartedAt);
 
   // Update understanding and memory only when changed.
   const conversationUpdatePayload: UpdateConversationPayload = {
@@ -144,10 +150,12 @@ export async function saveAIReply(
     conversationUpdatePayload.branch_id = branchIdToPersist;
   }
 
+  const conversationUpdateStartedAt = performance.now();
   const preSaveConversationUpdate = await updateConversation(
     conversationId,
     conversationUpdatePayload,
   );
+  const conversationUpdateMs = elapsedMs(conversationUpdateStartedAt);
 
   if (preSaveConversationUpdate.error) {
     return {
@@ -171,12 +179,15 @@ export async function saveAIReply(
         ];
   const savedMessages: Message[] = [];
   let pendingMediaAttached = false;
+  let messageInsertMs = 0;
+  let slowestMessageInsertMs = 0;
   for (const item of sequence) {
     const isText = item.type === "text";
     const asset = !isText ? mediaById.get(item.assetId) : null;
     if (!isText && (!asset || asset.media_type !== "photo")) continue;
     const attachPendingMedia =
       isText && response.pendingMedia !== null && !pendingMediaAttached;
+    const messageInsertStartedAt = performance.now();
     const result = await createMessage({
       conversation_id: conversationId,
       sender_type: "ai",
@@ -208,6 +219,9 @@ export async function saveAIReply(
             ...(queueWhatsAppDelivery ? { outbound_delivery: "whatsapp_outbox" } : {}),
           },
     });
+    const currentMessageInsertMs = elapsedMs(messageInsertStartedAt);
+    messageInsertMs += currentMessageInsertMs;
+    slowestMessageInsertMs = Math.max(slowestMessageInsertMs, currentMessageInsertMs);
     if (result.error)
       return {
         saved: false,
@@ -218,6 +232,17 @@ export async function saveAIReply(
   }
   if (savedMessages.length === 0)
     return { saved: false, error: "AI reply produced no deliverable messages." };
+
+  logPerformance("ai.reply_persistence", {
+    conversation_load_ms: conversationLoadMs,
+    memory_merge_ms: memoryMergeMs,
+    conversation_update_ms: conversationUpdateMs,
+    message_insert_ms: Math.round(messageInsertMs * 10) / 10,
+    slowest_message_insert_ms: slowestMessageInsertMs,
+    message_insert_count: savedMessages.length,
+    queues_whatsapp_delivery: queueWhatsAppDelivery,
+    total_ms: elapsedMs(totalStartedAt),
+  });
 
   return {
     saved: true,

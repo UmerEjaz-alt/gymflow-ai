@@ -27,6 +27,8 @@ export type ProcessConversationTurnResult = {
   aiMessage: Message | null;
   /** Persisted outgoing messages for this turn, in delivery order. */
   outboundMessages?: Message[];
+  /** Persisted authoritative endpoint used by the durable outbox trigger. */
+  deliveryEndpointId?: string | null;
   action: string;
   error: string | null;
 };
@@ -106,6 +108,7 @@ export async function processIncomingConversationTurn(
       customerMessage: context.latestCustomerMessage,
       aiMessage: fallbackResult.data!,
       outboundMessages: [fallbackResult.data!],
+      deliveryEndpointId: context.conversation.whatsapp_endpoint_id ?? null,
       action: "voice_transcription_failed",
       error: null,
     };
@@ -275,6 +278,7 @@ export async function processIncomingConversationTurn(
       customerMessage: context.latestCustomerMessage,
       aiMessage,
       outboundMessages,
+      deliveryEndpointId: context.conversation.whatsapp_endpoint_id ?? null,
       action: pipelineResult.action,
       error: null,
     };

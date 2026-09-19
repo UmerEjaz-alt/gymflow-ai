@@ -19,6 +19,7 @@ import {
   rateLimitBucket,
 } from "@/services/durable-rate-limit.server";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { requiresLegacyDeliveryPreparation } from "@/lib/whatsapp-delivery-optimization";
 
 export const runtime = "nodejs";
 
@@ -270,19 +271,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const turnStartedAt = performance.now();
       const turnResult = await processIncomingConversationTurn({
-          gymId: destination.data.gymId,
-          endpointId: destination.data.endpointId,
-          branchId: destination.data.branchId,
-          customerPhone: event.customerPhone,
-          customerName: event.customerName,
-          source: "whatsapp",
-          messageType: event.messageType,
-          content,
-          whatsappMessageId: event.whatsappMessageId,
-          metadata,
-          safeFallbackReplyText,
-          suppressAI,
-        });
+        gymId: destination.data.gymId,
+        endpointId: destination.data.endpointId,
+        branchId: destination.data.branchId,
+        customerPhone: event.customerPhone,
+        customerName: event.customerName,
+        source: "whatsapp",
+        messageType: event.messageType,
+        content,
+        whatsappMessageId: event.whatsappMessageId,
+        metadata,
+        safeFallbackReplyText,
+        suppressAI,
+      });
       logPerformance("whatsapp.turn_processing", {
         message_type: event.messageType,
         action: turnResult.action,
@@ -324,8 +325,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     for (const message of turn.outboundMessages ?? [turn.aiMessage]) {
       const outcome = await runWithSystemSupabase(async () => {
-        await prepareWhatsAppDelivery(message.id, event.recipientPhoneNumberId!);
-        return deliverWhatsAppMessage(message.id);
+        if (requiresLegacyDeliveryPreparation(turn.deliveryEndpointId ?? null)) {
+          await prepareWhatsAppDelivery(message.id, event.recipientPhoneNumberId!);
+        } else {
+          logPerformance("whatsapp.delivery_prepare", {
+            skipped_authoritative_endpoint: true,
+            total_ms: 0,
+          });
+        }
+        return deliverWhatsAppMessage(message.id, message);
       });
       if (outcome !== "sent") {
         console.error("[WhatsApp webhook] reply was queued but not delivered", {

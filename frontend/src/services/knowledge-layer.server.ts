@@ -374,35 +374,110 @@ function filterOffersForTurn(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-async function fetchGym(gymId: string) {
+async function fetchGym(gymId: string, purpose = "primary") {
+  const startedAt = performance.now();
   const result = await getGymById(gymId);
+  logPerformance("ai.knowledge_query", {
+    resource: "gym",
+    purpose,
+    outcome: result.error ? "error" : "success",
+    row_count: result.data ? 1 : 0,
+    total_ms: elapsedMs(startedAt),
+  });
   if (result.error) return { error: result.error };
   if (!result.data) return { error: "Gym profile not found." };
   return { gym: result.data };
 }
 
-async function fetchActivePackages(gymId: string, branchId: string) {
+async function fetchActivePackages(
+  gymId: string,
+  branchId: string,
+  purpose = "primary",
+) {
+  const startedAt = performance.now();
   const result = await getMembershipPackages(gymId, branchId);
+  logPerformance("ai.knowledge_query", {
+    resource: "packages",
+    purpose,
+    outcome: result.error ? "error" : "success",
+    row_count: result.data?.length ?? 0,
+    total_ms: elapsedMs(startedAt),
+  });
   if (result.error) return { error: result.error };
   return { packages: (result.data ?? []).filter((p) => p.active) };
 }
 
-async function fetchActiveTrainers(gymId: string, branchId: string) {
+async function fetchActiveTrainers(
+  gymId: string,
+  branchId: string,
+  purpose = "primary",
+) {
+  const startedAt = performance.now();
   const result = await getTrainers(gymId, branchId);
+  logPerformance("ai.knowledge_query", {
+    resource: "trainers",
+    purpose,
+    outcome: result.error ? "error" : "success",
+    row_count: result.data?.length ?? 0,
+    total_ms: elapsedMs(startedAt),
+  });
   if (result.error) return { error: result.error };
   return { trainers: (result.data ?? []).filter((t) => t.active) };
 }
 
-async function fetchActiveFacilities(gymId: string, branchId: string) {
+async function fetchActiveFacilities(
+  gymId: string,
+  branchId: string,
+  purpose = "primary",
+) {
+  const startedAt = performance.now();
   const result = await getFacilities(gymId, branchId);
+  logPerformance("ai.knowledge_query", {
+    resource: "facilities",
+    purpose,
+    outcome: result.error ? "error" : "success",
+    row_count: result.data?.length ?? 0,
+    total_ms: elapsedMs(startedAt),
+  });
   if (result.error) return { error: result.error };
   return { facilities: (result.data ?? []).filter((f) => f.active) };
 }
 
-async function fetchActiveMediaAssets(gymId: string, branchId: string) {
+async function fetchActiveMediaAssets(
+  gymId: string,
+  branchId: string,
+  purpose = "primary",
+) {
+  const startedAt = performance.now();
   const result = await getMediaAssets(gymId, branchId);
+  logPerformance("ai.knowledge_query", {
+    resource: "media",
+    purpose,
+    outcome: result.error ? "error" : "success",
+    row_count: result.data?.length ?? 0,
+    total_ms: elapsedMs(startedAt),
+  });
   if (result.error) return { error: result.error };
   return { media: (result.data ?? []).filter((m) => m.active) };
+}
+
+async function fetchActiveOffersForKnowledge(
+  gymId: string,
+  branchId: string | null,
+  packages: MembershipPackage[],
+  branchTimeZone: string | null,
+  purpose: "primary" | "cross_branch",
+) {
+  const startedAt = performance.now();
+  const result = await getActiveOffers(gymId, branchId, packages, branchTimeZone);
+  logPerformance("ai.knowledge_query", {
+    resource: "offers",
+    purpose,
+    outcome: result.error ? "error" : "success",
+    row_count: result.data?.length ?? 0,
+    total_ms: elapsedMs(startedAt),
+  });
+  return result;
 }
 
 function parsePendingMediaReference(
@@ -445,7 +520,11 @@ async function resolvePendingMedia(
   if (!pending || !branches.some((branch) => branch.id === pending.branch_id))
     return null;
 
-  const mediaResult = await fetchActiveMediaAssets(gymId, pending.branch_id);
+  const mediaResult = await fetchActiveMediaAssets(
+    gymId,
+    pending.branch_id,
+    "pending_media",
+  );
   if ("error" in mediaResult) return null;
   const asset = mediaResult.media.find(
     (candidate) =>
@@ -456,7 +535,11 @@ async function resolvePendingMedia(
   if (!asset) return null;
 
   if (asset.trainer_id) {
-    const trainersResult = await fetchActiveTrainers(gymId, pending.branch_id);
+    const trainersResult = await fetchActiveTrainers(
+      gymId,
+      pending.branch_id,
+      "pending_media",
+    );
     if (
       "error" in trainersResult ||
       !trainersResult.trainers.some((trainer) => trainer.id === asset.trainer_id)
@@ -699,7 +782,15 @@ async function resolveBranch(
   allBranches: Branch[];
   isMultiBranch: boolean;
 }> {
+  const startedAt = performance.now();
   const branchesResult = await getBranches(gymId);
+  logPerformance("ai.knowledge_query", {
+    resource: "branches",
+    purpose: "resolution",
+    outcome: branchesResult.error ? "error" : "success",
+    row_count: branchesResult.data?.length ?? 0,
+    total_ms: elapsedMs(startedAt),
+  });
   const allBranches = branchesResult.data ?? [];
   const isMultiBranch = allBranches.length > 1;
 
@@ -872,26 +963,6 @@ export async function buildKnowledgeContext(
   let needs = ctx.automationInstruction
     ? ALL_KNOWLEDGE_NEEDS
     : inferKnowledgeNeeds(customerText, ctx.latestMessages, offerRelevance);
-
-  // ── Resolve branch ────────────────────────────────────────────────────────
-  const branchResolutionPromise = (async () => {
-    const startedAt = performance.now();
-    const result = await resolveBranch(
-      gymId,
-      ctx.conversation.branch_id ?? null,
-    );
-    return { result, elapsedMs: elapsedMs(startedAt) };
-  })();
-  const gymPromise = (async () => {
-    const startedAt = performance.now();
-    const result = strategy.needsGym ? await fetchGym(gymId) : null;
-    return { result, elapsedMs: elapsedMs(startedAt) };
-  })();
-  const branchResolution = await branchResolutionPromise;
-  const { branch, allBranches, isMultiBranch } = branchResolution.result;
-  const branchResolutionMs = branchResolution.elapsedMs;
-
-  const branchId = branch?.id ?? null;
   const previousAiText = [...ctx.latestMessages]
     .reverse()
     .find(
@@ -901,6 +972,57 @@ export async function buildKnowledgeContext(
         message.message_type === "text",
     );
   const previous = parsePreviousTurnContext(previousAiText);
+  const initialIntent = classifyTurnIntent(customerText, needs, previous);
+  if (previous?.entity?.type === "package") {
+    needs = { ...needs, packages: true };
+  }
+  if (previous?.entity?.type === "trainer" || initialIntent === "trainer") {
+    needs = { ...needs, trainers: true, media: true };
+  }
+  if (previous?.entity?.type === "facility" || initialIntent === "facility") {
+    needs = { ...needs, facilities: true, media: true };
+  }
+
+  // ── Resolve branch ────────────────────────────────────────────────────────
+  const branchResolutionPromise = (async () => {
+    const startedAt = performance.now();
+    const result = await resolveBranch(gymId, ctx.conversation.branch_id ?? null);
+    return { result, elapsedMs: elapsedMs(startedAt) };
+  })();
+  const gymPromise = (async () => {
+    const startedAt = performance.now();
+    const result = strategy.needsGym ? await fetchGym(gymId) : null;
+    return { result, elapsedMs: elapsedMs(startedAt) };
+  })();
+  const establishedBranchId = ctx.conversation.branch_id ?? null;
+  // The conversation branch is protected by the compound gym/branch foreign
+  // key. Start scoped reads speculatively, but consume them only after the
+  // branch directory confirms the same authoritative branch for this turn.
+  const earlyPrimaryReads = establishedBranchId
+    ? {
+        packages:
+          strategy.needsPackages && needs.packages
+            ? fetchActivePackages(gymId, establishedBranchId, "established_branch")
+            : null,
+        trainers:
+          strategy.needsTrainers && needs.trainers
+            ? fetchActiveTrainers(gymId, establishedBranchId, "established_branch")
+            : null,
+        facilities:
+          strategy.needsFacilities && needs.facilities
+            ? fetchActiveFacilities(gymId, establishedBranchId, "established_branch")
+            : null,
+        media:
+          strategy.needsMedia && needs.media
+            ? fetchActiveMediaAssets(gymId, establishedBranchId, "established_branch")
+            : null,
+      }
+    : null;
+  const branchResolution = await branchResolutionPromise;
+  const { branch, allBranches, isMultiBranch } = branchResolution.result;
+  const branchResolutionMs = branchResolution.elapsedMs;
+
+  const branchId = branch?.id ?? null;
   const pendingMediaPromise = (async () => {
     const startedAt = performance.now();
     const result = ctx.automationInstruction
@@ -981,6 +1103,15 @@ export async function buildKnowledgeContext(
   if (previous?.entity?.type === "facility" || provisionalIntent === "facility") {
     needs = { ...needs, facilities: true, media: true };
   }
+  const useEarlyPrimaryReads =
+    establishedBranchId !== null && branchId === establishedBranchId;
+  if (earlyPrimaryReads && !useEarlyPrimaryReads) {
+    void Promise.all(
+      Object.values(earlyPrimaryReads).filter(
+        (read): read is NonNullable<typeof read> => read !== null,
+      ),
+    ).catch(() => undefined);
+  }
 
   // ── Parallel fetches ─────────────────────────────────────────────────────
   const dataQueriesStartedAt = performance.now();
@@ -989,16 +1120,24 @@ export async function buildKnowledgeContext(
     Promise.all([
       gymPromise.then(({ result }) => result),
       strategy.needsPackages && needs.packages && branchId
-        ? fetchActivePackages(gymId, branchId)
+        ? useEarlyPrimaryReads && earlyPrimaryReads?.packages
+          ? earlyPrimaryReads.packages
+          : fetchActivePackages(gymId, branchId)
         : Promise.resolve(null),
       strategy.needsTrainers && needs.trainers && branchId
-        ? fetchActiveTrainers(gymId, branchId)
+        ? useEarlyPrimaryReads && earlyPrimaryReads?.trainers
+          ? earlyPrimaryReads.trainers
+          : fetchActiveTrainers(gymId, branchId)
         : Promise.resolve(null),
       strategy.needsFacilities && needs.facilities && branchId
-        ? fetchActiveFacilities(gymId, branchId)
+        ? useEarlyPrimaryReads && earlyPrimaryReads?.facilities
+          ? earlyPrimaryReads.facilities
+          : fetchActiveFacilities(gymId, branchId)
         : Promise.resolve(null),
       strategy.needsMedia && needs.media && branchId
-        ? fetchActiveMediaAssets(gymId, branchId)
+        ? useEarlyPrimaryReads && earlyPrimaryReads?.media
+          ? earlyPrimaryReads.media
+          : fetchActiveMediaAssets(gymId, branchId)
         : Promise.resolve(null),
       // Fetch data for referenced cross-branches if any
       referencedBranches.length > 0
@@ -1006,16 +1145,16 @@ export async function buildKnowledgeContext(
             referencedBranches.map(async (rb) => {
               const [pkgs, facs, trns, media] = await Promise.all([
                 needs.packages || needs.offers
-                  ? fetchActivePackages(gymId, rb.id)
+                  ? fetchActivePackages(gymId, rb.id, "cross_branch")
                   : Promise.resolve({ packages: [] }),
                 needs.facilities
-                  ? fetchActiveFacilities(gymId, rb.id)
+                  ? fetchActiveFacilities(gymId, rb.id, "cross_branch")
                   : Promise.resolve({ facilities: [] }),
                 needs.trainers
-                  ? fetchActiveTrainers(gymId, rb.id)
+                  ? fetchActiveTrainers(gymId, rb.id, "cross_branch")
                   : Promise.resolve({ trainers: [] }),
                 needs.media
-                  ? fetchActiveMediaAssets(gymId, rb.id)
+                  ? fetchActiveMediaAssets(gymId, rb.id, "cross_branch")
                   : Promise.resolve({ media: [] }),
               ]);
               return {
@@ -1065,11 +1204,12 @@ export async function buildKnowledgeContext(
   const offersStartedAt = performance.now();
   const primaryOffersResult =
     needs.offers && branch?.timezone
-      ? await getActiveOffers(
+      ? await fetchActiveOffersForKnowledge(
           gymId,
           branchId,
           primaryPackages,
           branch?.timezone ?? null,
+          "primary",
         )
       : { data: null, error: null };
   if (primaryOffersResult.error)
@@ -1084,11 +1224,12 @@ export async function buildKnowledgeContext(
         crossBranchResults.map(async (crossBranch) => {
           if (!needs.offers) return crossBranch;
           if (!crossBranch.branch.timezone) return { ...crossBranch, offers: [] };
-          const offerResult = await getActiveOffers(
+          const offerResult = await fetchActiveOffersForKnowledge(
             gymId,
             crossBranch.branch.id,
             crossBranch.packages,
             crossBranch.branch.timezone,
+            "cross_branch",
           );
           if (offerResult.error) throw new Error(offerResult.error);
           return {
@@ -1184,6 +1325,7 @@ export async function buildKnowledgeContext(
     media_count: media?.length ?? 0,
     offer_count: offers?.length ?? 0,
     cross_branch_count: crossBranchKnowledge?.length ?? 0,
+    established_branch_reads_started_early: Boolean(earlyPrimaryReads),
     total_ms: elapsedMs(totalStartedAt),
   });
 
