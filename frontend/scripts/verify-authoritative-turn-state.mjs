@@ -4,7 +4,10 @@ import {
   resolveCurrentTurnState,
   resolveNamedEntity,
 } from "../src/services/authoritative-turn-state.ts";
-import { resolveMediaSelection } from "../src/services/media-selection.ts";
+import {
+  resolveMediaSelection,
+  resolveProactiveTrainerMedia,
+} from "../src/services/media-selection.ts";
 
 const branchId = "branch-a";
 const mediaFirstIntent = classifyCurrentTurnIntent({
@@ -33,6 +36,51 @@ const trainerEntity = {
   name: "Jaime",
 };
 const trainer = { id: trainerEntity.id, full_name: trainerEntity.name };
+
+// A normal trainer enquiry semantically becomes a trainer turn without any
+// requirement that the customer explicitly ask for an image.
+const trainerEnquiryIntent = classifyCurrentTurnIntent({
+  joiningSalesCue: false,
+  needs: {
+    all: false,
+    packages: false,
+    trainers: true,
+    facilities: false,
+    media: false,
+    policies: false,
+    openingHours: false,
+    offers: false,
+  },
+  previousIntent: "pricing",
+});
+assert.equal(trainerEnquiryIntent, "trainer");
+const trainerEnquiryTurn = resolveCurrentTurnState({
+    provisionalIntent: trainerEnquiryIntent,
+    needsAll: false,
+    mediaRequest: "none",
+    entityResolution: { entity: trainerEntity, source: "current" },
+  });
+assert.deepEqual(
+  trainerEnquiryTurn,
+  { intent: "trainer", entity: trainerEntity },
+);
+assert.deepEqual(
+  resolveProactiveTrainerMedia({
+    turnIntent: trainerEnquiryTurn.intent,
+    explicitMediaRequest: false,
+    resolvedTrainerId: trainerEnquiryTurn.entity?.id ?? null,
+    activeTrainerCount: 1,
+    availableTrainerCards: [
+      {
+        id: "trainer-jaime-card",
+        branch_id: branchId,
+        trainer_id: trainerEntity.id,
+      },
+    ],
+    previouslySentResolvedTrainerCards: [],
+  }).map((asset) => asset.id),
+  ["trainer-jaime-card"],
+);
 
 // Real failure shape: current trainer name is misspelled after pricing state.
 const matchedTrainer = resolveNamedEntity(
@@ -113,6 +161,7 @@ assert.deepEqual(
 );
 
 console.log("Current misspelled trainer entity overrides stale package state.");
+console.log("Normal trainer enquiries override stale pricing intent semantically.");
 console.log("General gallery requests discard incompatible package continuity.");
 console.log("Valid trainer and gym media actions survive authoritative validation.");
 console.log("Contextual pricing and trainer follow-ups retain useful state.");

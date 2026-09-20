@@ -21,7 +21,10 @@ import type { Facility } from "@/types/facility";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 import type { MembershipPackage } from "@/types/membership-package";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
-import { resolveMediaSelection } from "@/services/media-selection";
+import {
+  resolveMediaSelection,
+  resolveProactiveTrainerMedia,
+} from "@/services/media-selection";
 
 export type ProcessConversationTurnResult = {
   customerMessage: Message | null;
@@ -394,10 +397,9 @@ function buildMediaSafeResponse(
   const trainerCards = effectivePhotos.filter(
     (asset) => asset.trainer_id !== null && activeTrainerIds.has(asset.trainer_id),
   );
-  const trainerAsked = turn.hasExplicitTrainerIntent;
-  const resolvedTrainerIds = new Set(
-    turn.entity?.type === "trainer" ? [turn.entity.id] : [],
-  );
+  const resolvedTrainerId =
+    turn.entity?.type === "trainer" ? turn.entity.id : null;
+  const resolvedTrainerIds = new Set(resolvedTrainerId ? [resolvedTrainerId] : []);
   const resolvedTrainerCards = trainerCards.filter(
     (asset) => asset.trainer_id && resolvedTrainerIds.has(asset.trainer_id),
   );
@@ -440,16 +442,14 @@ function buildMediaSafeResponse(
           alreadySent.has(asset.id),
       )
     : [];
-  const automaticTrainerCards =
-    (turn.hasExplicitTrainerIntent || turn.explicitMediaRequest) &&
-    resolvedTrainerCards.length > 0
-      ? resolvedTrainerCards.slice(0, 1)
-      : (turn.hasExplicitTrainerIntent || turn.explicitMediaRequest) &&
-          previouslySentResolvedTrainerCards.length > 0
-        ? previouslySentResolvedTrainerCards.slice(0, 1)
-        : trainerAsked && activeTrainers.length <= 3 && trainerCards.length > 0
-          ? trainerCards
-          : [];
+  const automaticTrainerCards = resolveProactiveTrainerMedia({
+    turnIntent: turn.intent,
+    explicitMediaRequest: turn.explicitMediaRequest,
+    resolvedTrainerId,
+    activeTrainerCount: activeTrainers.length,
+    availableTrainerCards: trainerCards,
+    previouslySentResolvedTrainerCards,
+  });
   const joiningPresentation = Boolean(
     turn.effectiveBranchId &&
     (turn.primaryBranchId === turn.effectiveBranchId ||

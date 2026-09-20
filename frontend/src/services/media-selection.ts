@@ -8,6 +8,10 @@ export type MediaSelectionAsset = {
   branch_id: string;
 };
 
+export type TrainerMediaSelectionAsset = MediaSelectionAsset & {
+  trainer_id: string | null;
+};
+
 type ResolveMediaSelectionInput = {
   explicitMediaRequest: boolean;
   effectiveBranchId: string | null;
@@ -24,6 +28,59 @@ export type MediaSelectionReason =
   | "not_explicit"
   | "explicit_authoritative_fallback"
   | "no_eligible_media";
+
+type ResolveProactiveTrainerMediaInput = {
+  turnIntent: string;
+  explicitMediaRequest: boolean;
+  resolvedTrainerId: string | null;
+  activeTrainerCount: number;
+  availableTrainerCards: TrainerMediaSelectionAsset[];
+  previouslySentResolvedTrainerCards: TrainerMediaSelectionAsset[];
+  maxAssets?: number;
+};
+
+/**
+ * Selects trainer poster cards from the same authoritative media set used by
+ * the normal media resolver. A semantic trainer turn represents a trainer
+ * presentation even when the customer did not explicitly ask for a photo.
+ *
+ * Previously sent cards remain excluded from contextual presentations. The
+ * sole exception is an explicit request for a resolved trainer's image, which
+ * preserves the existing deliberate resend behavior.
+ */
+export function resolveProactiveTrainerMedia({
+  turnIntent,
+  explicitMediaRequest,
+  resolvedTrainerId,
+  activeTrainerCount,
+  availableTrainerCards,
+  previouslySentResolvedTrainerCards,
+  maxAssets = 3,
+}: ResolveProactiveTrainerMediaInput): TrainerMediaSelectionAsset[] {
+  const isTrainerPresentation = turnIntent === "trainer";
+
+  if (resolvedTrainerId && (isTrainerPresentation || explicitMediaRequest)) {
+    const matchingCards = availableTrainerCards.filter(
+      (asset) => asset.trainer_id === resolvedTrainerId,
+    );
+    if (matchingCards.length > 0) return matchingCards.slice(0, 1);
+    if (explicitMediaRequest)
+      return previouslySentResolvedTrainerCards
+        .filter((asset) => asset.trainer_id === resolvedTrainerId)
+        .slice(0, 1);
+    return [];
+  }
+
+  if (
+    isTrainerPresentation &&
+    activeTrainerCount <= maxAssets &&
+    availableTrainerCards.length > 0
+  ) {
+    return availableTrainerCards.slice(0, maxAssets);
+  }
+
+  return [];
+}
 
 /**
  * Resolves the delivery actions for the existing authoritative media path.
