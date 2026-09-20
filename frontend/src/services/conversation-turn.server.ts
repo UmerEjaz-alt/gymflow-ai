@@ -21,6 +21,7 @@ import type { Facility } from "@/types/facility";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 import type { MembershipPackage } from "@/types/membership-package";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { resolveMediaSelection } from "@/services/media-selection";
 
 export type ProcessConversationTurnResult = {
   customerMessage: Message | null;
@@ -381,11 +382,6 @@ function buildMediaSafeResponse(
     (asset, index, assets) =>
       assets.findIndex((item) => item.id === asset.id) === index,
   );
-  const requested = response.mediaActions
-    .filter((action) =>
-      permittedWithPending.some((asset) => asset.id === action.assetId),
-    )
-    .slice(0, 3);
   const automaticFacilityMedia =
     matchingFacilityPhotos.length > 0
       ? [{ assetId: matchingFacilityPhotos[0]!.id, caption: null }]
@@ -402,6 +398,33 @@ function buildMediaSafeResponse(
   const resolvedTrainerCards = trainerCards.filter(
     (asset) => asset.trainer_id && resolvedTrainerIds.has(asset.trainer_id),
   );
+  const explicitFallbackMedia =
+    turn.entity?.type === "trainer"
+      ? resolvedTrainerCards.slice(0, 1)
+      : turn.intent === "trainer"
+        ? trainerCards
+        : permitted;
+  const authoritativeAssetIds = new Set([
+    ...turn.facts.media.map((asset) => asset.id),
+    ...(pendingOfferCandidate ? [pendingOfferCandidate.id] : []),
+    ...(inheritedPendingCandidate ? [inheritedPendingCandidate.id] : []),
+  ]);
+  const explicitSelection = resolveMediaSelection({
+    explicitMediaRequest: turn.explicitMediaRequest,
+    effectiveBranchId: turn.effectiveBranchId,
+    authoritativeAssetIds,
+    requestedActions: [
+      ...response.mediaActions,
+      ...response.messageSequence.flatMap((item) =>
+        item.type === "image"
+          ? [{ assetId: item.assetId, caption: item.caption }]
+          : [],
+      ),
+    ],
+    allowedAssets: permittedWithPending,
+    fallbackAssets: explicitFallbackMedia,
+  });
+  const requested = explicitSelection.actions;
   const explicitlyRequestsTrainerImage =
     resolvedTrainerIds.size > 0 && turn.explicitMediaRequest;
   const previouslySentResolvedTrainerCards = explicitlyRequestsTrainerImage
@@ -461,14 +484,23 @@ function buildMediaSafeResponse(
         actions.findIndex((item) => item.assetId === action.assetId) === index,
     )
     .slice(0, 3);
+  const mediaUnavailable =
+    turn.explicitMediaRequest && mediaActions.length === 0;
+  const responseText = mediaUnavailable
+    ? "I don't have a matching photo available to send right now."
+    : response.text;
   const messageSequence: typeof response.messageSequence =
-    response.messageSequence.length > 0 ? [] : [{ type: "text", text: response.text }];
-  for (const item of response.messageSequence) {
-    if (
-      item.type === "text" ||
-      permittedWithPending.some((asset) => asset.id === item.assetId)
-    )
-      messageSequence.push(item);
+    mediaUnavailable || response.messageSequence.length === 0
+      ? [{ type: "text", text: responseText }]
+      : [];
+  if (!mediaUnavailable) {
+    for (const item of response.messageSequence) {
+      if (
+        item.type === "text" ||
+        permittedWithPending.some((asset) => asset.id === item.assetId)
+      )
+        messageSequence.push(item);
+    }
   }
 
   if (joiningPresentation && featured.length > 0 && featuredBranch) {
@@ -550,6 +582,7 @@ function buildMediaSafeResponse(
       : null;
   return {
     ...response,
+    text: responseText,
     mediaActions,
     messageSequence,
     pendingMedia: validatedPendingMedia,

@@ -10,6 +10,7 @@
     "verify:automations": "node scripts/verify-automation-run.mjs",
     "verify:voice-transcription": "node scripts/verify-voice-transcription.mjs",
     "verify:whatsapp-regressions": "node scripts/verify-whatsapp-regressions.mjs",
+    "verify:media-selection": "node scripts/verify-media-selection.mjs",
     "verify:performance-regressions": "node scripts/verify-performance-regressions.mjs",
     "verify:whatsapp-latency": "node scripts/verify-whatsapp-latency-optimizations.mjs",
     "verify:sales-intelligence": "node scripts/verify-sales-intelligence.mjs",

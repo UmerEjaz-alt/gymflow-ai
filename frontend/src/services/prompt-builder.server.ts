@@ -303,7 +303,7 @@ export function buildSystemPrompt(
       "Trials/visits: follow the discussed branch's configured policy exactly. Do not offer a trial where it is not allowed; suggest a tour only when that branch permits visits.",
       "Discounts/concessions/last price: confirm only an explicitly configured approved offer. Otherwise say you cannot confirm it and direct the customer to reception using the configured phone if present; never claim discounts are unavailable.",
       "Promotions: only the Active Offers supplied for this turn are current. On a pricing, package, budget, joining, membership, or branch-selection-after-sales response, naturally mention any supplied eligible price-changing offer with its regular and server-calculated final price. Use offers only for their listed eligible packages/branch. If asked about another offer after an active offer was discussed, acknowledge the listed active offer and say whether another listed offer exists; never say there are no offers when one is listed. Never calculate, extend, or infer an offer; do not mention an offer that is absent from the knowledge.",
-      "Media: use the supplied Authoritative Turn Context for the branch and resolved entity; do not rediscover them from prose. When the customer asks for photos and listed media is available for that context, select the appropriate listed asset IDs with media_actions. If none is listed, say naturally that no photos are available to send for that branch. Never invent a website, Instagram, Facebook, or another channel/link.",
+      "Media: use the supplied Authoritative Turn Context for the branch and resolved entity; do not rediscover them from prose. When the customer explicitly asks for photos and listed media is available for that context, media_actions is REQUIRED for that turn and must contain the appropriate listed asset IDs. Never say or imply that a photo is being sent unless its asset ID is in media_actions. If none is listed, omit media_actions and say naturally that no photos are available to send for that branch. Never invent a website, Instagram, Facebook, or another channel/link.",
       "For a joining-intent branch selection with listed Featured branch photos, use message_sequence as: short branch intro text → Featured image(s) → grounded package/current-offer text. Each item is {type:'text',text} or {type:'image',asset_id,caption?}; also include those image IDs in media_actions. Do not use this presentation for fees, hours, location, or ordinary branch mentions.",
       "Trainer grounding: a trainer's name, specialization, availability, experience, and bio are the only trainer facts you may state. A specialization is not proof of a personalized plan, weight-loss coaching, an assessment, a consultation, availability, or results. Mention PT inclusion only for a listed package that explicitly says Personal Training Included: Yes. Never say a consultation, assessment, or service is free unless that exact benefit is supplied in branch policy, package data, or an active offer. Images identify the listed trainer only; never infer facts from them.",
       "Conversation: ask at most ONE question per reply. Ask only one missing fact that changes the next helpful answer—never run a qualification form or ask for goal, budget, timing, experience, and PT together. Check conversation history and known customer information first; never ask again for a stated goal, preference, date, or time. For strong joining or visit intent, acknowledge the plan and help the customer take the next concrete step using actual policy/hours instead of returning to generic discovery. Do not add a generic CTA to every reply.",
@@ -609,11 +609,17 @@ export function buildKnowledgeSummary(knowledge: KnowledgeContext): PromptSectio
     lines.push("");
     lines.push("## Media, Photos, & Videos");
     lines.push(
-      "Provide these URLs to customers when they ask to see photos, videos, or brochures:",
+      "Select these assets by exact Asset ID in media_actions when appropriate. The channel delivers the stored URL; never paste the URL into the reply:",
     );
     for (const asset of knowledge.media) {
       lines.push(`- Asset ID: ${asset.id} | [${asset.title}](${asset.media_url})`);
       lines.push(`  Type: ${asset.media_type} | Category: ${asset.category}`);
+      if (asset.trainer_id) {
+        const trainer = knowledge.trainers?.find(
+          (candidate) => candidate.id === asset.trainer_id,
+        );
+        if (trainer) lines.push(`  Trainer: ${trainer.full_name}`);
+      }
       if (asset.featured && asset.trainer_id === null)
         lines.push("  Featured Branch Photo: Yes");
       if (asset.description) lines.push(`  Description: ${asset.description}`);
