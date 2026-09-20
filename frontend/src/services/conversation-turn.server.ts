@@ -287,6 +287,9 @@ export async function processIncomingConversationTurn(
       booking_action_ms: bookingActionMs,
       persistence_ms: persistenceMs,
       outbound_message_count: outboundMessages.length,
+      outbound_message_types: outboundMessages
+        .map((message) => message.message_type)
+        .join(","),
       total_ms: elapsedMs(totalStartedAt),
     });
 
@@ -525,6 +528,17 @@ function buildMediaSafeResponse(
         featuredBranch.branch_name,
         turn,
       );
+      logMediaResolution({
+        response,
+        turn,
+        availableMedia,
+        effectivePhotos,
+        permittedWithPending,
+        explicitFallbackMedia,
+        explicitSelection,
+        mediaActions,
+        finalMessageTypes: ["text", ...featured.map(() => "image"), "text"],
+      });
       return {
         ...response,
         mediaActions,
@@ -580,6 +594,17 @@ function buildMediaSafeResponse(
     isPendingMediaEligible(pendingOfferCandidate, activeTrainerIds)
       ? toPendingMediaReference(pendingOfferCandidate)
       : null;
+  logMediaResolution({
+    response,
+    turn,
+    availableMedia,
+    effectivePhotos,
+    permittedWithPending,
+    explicitFallbackMedia,
+    explicitSelection,
+    mediaActions,
+    finalMessageTypes: messageSequence.map((item) => item.type),
+  });
   return {
     ...response,
     text: responseText,
@@ -587,6 +612,61 @@ function buildMediaSafeResponse(
     messageSequence,
     pendingMedia: validatedPendingMedia,
   };
+}
+
+function logMediaResolution(input: {
+  response: NonNullable<
+    Awaited<ReturnType<typeof generateValidatedReply>>["validatedResponse"]
+  >;
+  turn: ResolvedTurnContext;
+  availableMedia: MediaAsset[];
+  effectivePhotos: MediaAsset[];
+  permittedWithPending: MediaAsset[];
+  explicitFallbackMedia: MediaAsset[];
+  explicitSelection: ReturnType<typeof resolveMediaSelection>;
+  mediaActions: Array<{ assetId: string; caption: string | null }>;
+  finalMessageTypes: string[];
+}): void {
+  const describe = (assets: MediaAsset[]) =>
+    assets
+      .slice(0, 10)
+      .map(
+        (asset) =>
+          `${asset.id}:${asset.branch_id}:${asset.media_type}:${asset.category}:${asset.trainer_id ?? "gallery"}:${asset.active ? "active" : "inactive"}:${asset.featured ? "featured" : "standard"}`,
+      )
+      .join(",");
+  const modelSequenceImageIds = input.response.messageSequence.flatMap((item) =>
+    item.type === "image" ? [item.assetId] : [],
+  );
+
+  logPerformance("ai.media_resolution", {
+    explicit_media_request: input.turn.explicitMediaRequest,
+    media_request: input.turn.mediaRequest,
+    intent: input.turn.intent,
+    entity_type: input.turn.entity?.type ?? null,
+    effective_branch_id: input.turn.effectiveBranchId,
+    ai_media_action_count: input.response.mediaActions.length,
+    ai_media_action_ids: input.response.mediaActions
+      .map((action) => action.assetId)
+      .join(","),
+    ai_sequence_image_count: modelSequenceImageIds.length,
+    ai_sequence_image_ids: modelSequenceImageIds.join(","),
+    available_media_count: input.availableMedia.length,
+    available_media: describe(input.availableMedia),
+    effective_photo_count: input.effectivePhotos.length,
+    effective_photos: describe(input.effectivePhotos),
+    candidate_media_count: input.permittedWithPending.length,
+    candidate_media: describe(input.permittedWithPending),
+    fallback_media_count: input.explicitFallbackMedia.length,
+    fallback_media: describe(input.explicitFallbackMedia),
+    resolver_reason: input.explicitSelection.reason,
+    resolver_action_count: input.explicitSelection.actions.length,
+    final_media_action_count: input.mediaActions.length,
+    final_media_action_ids: input.mediaActions
+      .map((action) => action.assetId)
+      .join(","),
+    final_message_types: input.finalMessageTypes.join(","),
+  });
 }
 
 function buildGroundedJoiningDetails(

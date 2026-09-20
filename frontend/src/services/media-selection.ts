@@ -18,6 +18,13 @@ type ResolveMediaSelectionInput = {
   maxAssets?: number;
 };
 
+export type MediaSelectionReason =
+  | "no_effective_branch"
+  | "model_selection"
+  | "not_explicit"
+  | "explicit_authoritative_fallback"
+  | "no_eligible_media";
+
 /**
  * Resolves the delivery actions for the existing authoritative media path.
  *
@@ -36,9 +43,14 @@ export function resolveMediaSelection({
 }: ResolveMediaSelectionInput): {
   actions: MediaSelectionAction[];
   mediaUnavailable: boolean;
+  reason: MediaSelectionReason;
 } {
   if (!effectiveBranchId) {
-    return { actions: [], mediaUnavailable: explicitMediaRequest };
+    return {
+      actions: [],
+      mediaUnavailable: explicitMediaRequest,
+      reason: "no_effective_branch",
+    };
   }
 
   const isAuthoritative = (asset: MediaSelectionAsset) =>
@@ -54,7 +66,11 @@ export function resolveMediaSelection({
     .slice(0, maxAssets);
 
   if (requested.length > 0 || !explicitMediaRequest) {
-    return { actions: requested, mediaUnavailable: false };
+    return {
+      actions: requested,
+      mediaUnavailable: false,
+      reason: requested.length > 0 ? "model_selection" : "not_explicit",
+    };
   }
 
   const fallback = fallbackAssets
@@ -70,5 +86,9 @@ export function resolveMediaSelection({
   return {
     actions: fallback,
     mediaUnavailable: fallback.length === 0,
+    reason:
+      fallback.length > 0
+        ? "explicit_authoritative_fallback"
+        : "no_eligible_media",
   };
 }

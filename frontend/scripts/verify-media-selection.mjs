@@ -9,6 +9,63 @@ const secondGymPhoto = { id: "gym-photo-a-2", branch_id: branchA };
 const trainerPhoto = { id: "trainer-photo-a", branch_id: branchA };
 const otherBranchPhoto = { id: "gym-photo-b", branch_id: branchB };
 
+// Mirrors the production G-14 shape: the featured gym photo was already sent,
+// one non-trainer photo remains eligible, and a trainer card must stay outside
+// a general gym gallery request.
+const productionShapedMedia = [
+  {
+    id: "featured-strength-photo",
+    branch_id: branchA,
+    media_type: "photo",
+    category: "strength_area",
+    active: true,
+    featured: true,
+    trainer_id: null,
+  },
+  {
+    id: "sauna-photo",
+    branch_id: branchA,
+    media_type: "photo",
+    category: "sauna",
+    active: true,
+    featured: false,
+    trainer_id: null,
+  },
+  {
+    id: "trainer-card",
+    branch_id: branchA,
+    media_type: "photo",
+    category: "trainer",
+    active: true,
+    featured: false,
+    trainer_id: "trainer-a",
+  },
+];
+const alreadySent = new Set(["featured-strength-photo"]);
+const effectivePhotos = productionShapedMedia.filter(
+  (asset) =>
+    asset.active &&
+    asset.media_type === "photo" &&
+    asset.branch_id === branchA &&
+    !alreadySent.has(asset.id),
+);
+const productionGallery = effectivePhotos.filter((asset) => asset.trainer_id === null);
+const productionShapeSelection = resolveMediaSelection({
+  explicitMediaRequest: true,
+  effectiveBranchId: branchA,
+  authoritativeAssetIds: new Set(productionShapedMedia.map((asset) => asset.id)),
+  requestedActions: [],
+  allowedAssets: productionGallery,
+  fallbackAssets: productionGallery,
+});
+assert.deepEqual(productionShapeSelection.actions, [
+  { assetId: "sauna-photo", caption: null },
+]);
+assert.equal(
+  productionShapeSelection.reason,
+  "explicit_authoritative_fallback",
+);
+
 const gymSelection = resolveMediaSelection({
   explicitMediaRequest: true,
   effectiveBranchId: branchA,
@@ -22,6 +79,7 @@ assert.deepEqual(
   [gymPhoto.id, secondGymPhoto.id],
 );
 assert.equal(gymSelection.mediaUnavailable, false);
+assert.equal(gymSelection.reason, "explicit_authoritative_fallback");
 
 const trainerSelection = resolveMediaSelection({
   explicitMediaRequest: true,
@@ -45,6 +103,7 @@ const unavailableSelection = resolveMediaSelection({
 });
 assert.deepEqual(unavailableSelection.actions, []);
 assert.equal(unavailableSelection.mediaUnavailable, true);
+assert.equal(unavailableSelection.reason, "no_eligible_media");
 
 const isolatedSelection = resolveMediaSelection({
   explicitMediaRequest: true,
@@ -66,7 +125,11 @@ const normalTextSelection = resolveMediaSelection({
   allowedAssets: [gymPhoto],
   fallbackAssets: [gymPhoto],
 });
-assert.deepEqual(normalTextSelection, { actions: [], mediaUnavailable: false });
+assert.deepEqual(normalTextSelection, {
+  actions: [],
+  mediaUnavailable: false,
+  reason: "not_explicit",
+});
 
 const selectedByModel = resolveMediaSelection({
   explicitMediaRequest: true,
@@ -88,6 +151,8 @@ const [turnSource, replySource, promptSource] = await Promise.all([
 assert.match(turnSource, /resolveMediaSelection\(\{/);
 assert.match(turnSource, /turn\.entity\?\.type === "trainer"[\s\S]*resolvedTrainerCards\.slice\(0, 1\)/);
 assert.match(turnSource, /turn\.explicitMediaRequest && mediaActions\.length === 0/);
+assert.match(turnSource, /logPerformance\("ai\.media_resolution"/);
+assert.match(turnSource, /outbound_message_types:/);
 assert.match(turnSource, /text: responseText,[\s\S]*mediaActions,[\s\S]*messageSequence/);
 assert.match(replySource, /message_type: isText \? "text" : "image"/);
 assert.match(replySource, /media_asset_id: asset!\.id/);
