@@ -28,6 +28,13 @@ import { getMediaAssets } from "@/services/media-asset.server";
 import { getActiveOffers } from "@/services/offer.server";
 import { hasJoiningSalesCue } from "@/lib/joining-intent-cues";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import {
+  classifyCurrentTurnIntent,
+  normalizeEntityText,
+  resolveCurrentTurnState,
+  resolveNamedEntity,
+  type EntityResolution,
+} from "@/services/authoritative-turn-state";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -597,15 +604,11 @@ function classifyTurnIntent(
   needs: KnowledgeNeeds,
   previous: ResolvedTurnContext["previous"],
 ): ResolvedTurnContext["intent"] {
-  if (hasJoiningSalesCue(text)) return "joining";
-  if (needs.all) return previous?.intent ?? "general";
-  if (needs.trainers) return "trainer";
-  if (needs.facilities) return "facility";
-  if (needs.packages || needs.offers) return "pricing";
-  if (needs.openingHours) return "hours";
-  if (needs.policies) return "policy";
-  if (needs.media) return "media";
-  return previous?.intent ?? "general";
+  return classifyCurrentTurnIntent({
+    joiningSalesCue: hasJoiningSalesCue(text),
+    needs,
+    previousIntent: previous?.intent ?? null,
+  });
 }
 
 function isDirectFacilityAvailabilityQuestion(value: string): boolean {
@@ -649,45 +652,6 @@ function resolveMediaRequest(
   return { explicitMediaRequest, mediaRequest, mediaCategory };
 }
 
-function normalizeEntityText(value: string): string {
-  return value
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function resolveNamedEntity<T extends { id: string }>(
-  text: string,
-  items: T[],
-  name: (item: T) => string,
-  collapseEquivalentNames = false,
-): T | null {
-  const normalized = normalizeEntityText(text);
-  const matches = items.filter((item) => {
-    const itemName = normalizeEntityText(name(item));
-    if (!itemName) return false;
-    if (normalized.includes(itemName)) return true;
-    const tokens = itemName.split(" ").filter((token) => token.length >= 3);
-    return tokens.length > 0 && tokens.some((token) => normalized.includes(token));
-  });
-  if (matches.length === 1) return matches[0]!;
-
-  // Legacy facility rows can contain the same logical owner-entered name more
-  // than once. Those are not distinct choices for a customer; keep genuinely
-  // different names ambiguous, but allow the facility resolver to use their
-  // shared grounded name.
-  if (
-    collapseEquivalentNames &&
-    matches.length > 1 &&
-    new Set(matches.map((item) => normalizeEntityText(name(item)))).size === 1
-  ) {
-    return [...matches].sort((left, right) => left.id.localeCompare(right.id))[0]!;
-  }
-
-  return null;
-}
-
 function resolveTurnEntity(
   text: string,
   intent: ResolvedTurnContext["intent"],
@@ -696,15 +660,27 @@ function resolveTurnEntity(
   packages: MembershipPackage[],
   trainers: Trainer[],
   facilities: Facility[],
-): ResolvedTurnEntity {
+): EntityResolution {
   const facility = resolveNamedEntity(text, facilities, (item) => item.name, true);
-  if (facility) return { type: "facility", id: facility.id, name: facility.name };
+  if (facility)
+    return {
+      entity: { type: "facility", id: facility.id, name: facility.name },
+      source: "current",
+    };
   const trainer =
     resolveNamedEntity(text, trainers, (item) => item.full_name) ??
     (intent === "trainer" && trainers.length === 1 ? trainers[0]! : null);
-  if (trainer) return { type: "trainer", id: trainer.id, name: trainer.full_name };
+  if (trainer)
+    return {
+      entity: { type: "trainer", id: trainer.id, name: trainer.full_name },
+      source: "current",
+    };
   const pkg = resolveNamedEntity(text, packages, (item) => item.package_name);
-  if (pkg) return { type: "package", id: pkg.id, name: pkg.package_name };
+  if (pkg)
+    return {
+      entity: { type: "package", id: pkg.id, name: pkg.package_name },
+      source: "current",
+    };
   // A temporary branch reference can continue the previously grounded topic
   // (for example, the same owner-configured facility at another location).
   // Re-resolve by the structured entity name against the effective branch's
@@ -744,9 +720,12 @@ function resolveTurnEntity(
     if (matchingEntity.length === 1) {
       const item = matchingEntity[0]!;
       return {
-        type: previous.entity.type,
-        id: item.id,
-        name: name(item),
+        entity: {
+          type: previous.entity.type,
+          id: item.id,
+          name: name(item),
+        },
+        source: "continuity",
       };
     }
   }
@@ -757,9 +736,54 @@ function resolveTurnEntity(
         : previous.entity.type === "trainer"
           ? trainers
           : packages;
-    if (source.some((item) => item.id === previous.entity!.id)) return previous.entity;
+    if (source.some((item) => item.id === previous.entity!.id))
+      return { entity: previous.entity, source: "continuity" };
   }
-  return null;
+  return { entity: null, source: "none" };
+}
+
+export function resolveAuthoritativeTurnState(input: {
+  customerText: string;
+  needs: KnowledgeNeeds;
+  previous: ResolvedTurnContext["previous"];
+  effectiveBranchId: string | null;
+  packages: MembershipPackage[];
+  trainers: Trainer[];
+  facilities: Facility[];
+}): {
+  intent: ResolvedTurnContext["intent"];
+  entity: ResolvedTurnEntity;
+  entitySource: EntityResolution["source"];
+  mediaRequest: ReturnType<typeof resolveMediaRequest>;
+} {
+  const provisionalIntent = classifyTurnIntent(
+    input.customerText,
+    input.needs,
+    input.previous,
+  );
+  const entityResolution = resolveTurnEntity(
+    input.customerText,
+    provisionalIntent,
+    input.effectiveBranchId,
+    input.previous,
+    input.packages,
+    input.trainers,
+    input.facilities,
+  );
+  const mediaRequest = resolveMediaRequest(input.customerText);
+  const currentState = resolveCurrentTurnState({
+    provisionalIntent,
+    needsAll: input.needs.all,
+    mediaRequest: mediaRequest.mediaRequest,
+    entityResolution,
+  });
+
+  return {
+    intent: currentState.intent,
+    entity: currentState.entity as ResolvedTurnEntity,
+    entitySource: entityResolution.source,
+    mediaRequest,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,17 +1277,16 @@ export async function buildKnowledgeContext(
   const effectiveFacilities = effectiveCrossBranch?.facilities ?? facilities ?? [];
   const effectiveMedia = effectiveCrossBranch?.media ?? media ?? [];
   const effectiveOffers = effectiveCrossBranch?.offers ?? offers ?? [];
-  const intent = classifyTurnIntent(customerText, needs, previous);
-  const entity = resolveTurnEntity(
+  const resolvedState = resolveAuthoritativeTurnState({
     customerText,
-    intent,
-    effectiveBranchId,
+    needs,
     previous,
-    effectivePackages,
-    effectiveTrainers,
-    effectiveFacilities,
-  );
-  const mediaRequest = resolveMediaRequest(customerText);
+    effectiveBranchId,
+    packages: effectivePackages,
+    trainers: effectiveTrainers,
+    facilities: effectiveFacilities,
+  });
+  const { intent, entity, mediaRequest } = resolvedState;
   const turn: ResolvedTurnContext = {
     gymId,
     primaryBranchId: branchId,
@@ -1325,6 +1348,11 @@ export async function buildKnowledgeContext(
     media_count: media?.length ?? 0,
     offer_count: offers?.length ?? 0,
     cross_branch_count: crossBranchKnowledge?.length ?? 0,
+    resolved_intent: turn.intent,
+    resolved_entity_type: turn.entity?.type ?? null,
+    resolved_entity_source: resolvedState.entitySource,
+    explicit_media_request: turn.explicitMediaRequest,
+    resolved_media_request: turn.mediaRequest,
     established_branch_reads_started_early: Boolean(earlyPrimaryReads),
     total_ms: elapsedMs(totalStartedAt),
   });
