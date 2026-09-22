@@ -29,10 +29,10 @@ export function TopNav({
   gymName = null,
 }: TopNavProps) {
   return (
-    <header className="border-border bg-background/95 supports-backdrop-filter:bg-background/60 sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 backdrop-blur lg:px-6">
+    <header className="border-border bg-background/95 supports-backdrop-filter:bg-background/60 sticky top-0 z-30 flex h-13 shrink-0 items-center gap-2 border-b px-3 backdrop-blur sm:px-4 xl:px-5">
       <Button
         aria-label="Open navigation"
-        className="lg:hidden"
+        className="xl:hidden"
         onClick={onMobileMenuToggle}
         size="icon"
         variant="ghost"
@@ -41,7 +41,7 @@ export function TopNav({
       </Button>
       <Button
         aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"}
-        className="hidden lg:inline-flex"
+        className="hidden xl:inline-flex"
         onClick={onSidebarToggle}
         size="icon"
         variant="ghost"
@@ -53,7 +53,7 @@ export function TopNav({
         )}
       </Button>
 
-      <div className="flex min-w-0 items-center gap-2 lg:w-48">
+      <div className="flex min-w-0 items-center gap-2 xl:w-44">
         <div className="bg-primary text-primary-foreground relative grid size-7 shrink-0 place-items-center overflow-hidden rounded-md text-xs font-bold">
           G
           {gymLogoUrl ? (

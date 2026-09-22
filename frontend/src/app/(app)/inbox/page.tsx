@@ -177,14 +177,14 @@ async function sendSimulatorMessage(conversationId: string, content: string) {
 export default async function InboxPage() {
   const { conversations, activeEndpoints, branches, error } = await loadSimulatorData();
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mb-5 flex items-center gap-3">
-        <div className="bg-muted grid size-9 place-items-center rounded-lg">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-2 py-2 sm:px-3 xl:px-4">
+      <div className="mb-2 flex shrink-0 items-center gap-2.5 px-1">
+        <div className="bg-muted grid size-7 place-items-center rounded-md">
           <Inbox aria-hidden className="size-4" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
-          <p className="text-muted-foreground text-sm">
+          <h1 className="text-base font-semibold tracking-tight sm:text-lg">Inbox</h1>
+          <p className="text-muted-foreground hidden text-xs md:block">
             Review real WhatsApp conversations and test the same AI pipeline with
             simulated customers.
           </p>

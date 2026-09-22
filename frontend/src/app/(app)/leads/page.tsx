@@ -72,8 +72,8 @@ export default async function LeadsPage() {
       total_ms: elapsedMs(totalStartedAt),
     });
     return (
-      <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-8 flex items-center gap-3">
+      <div className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-5 sm:py-6 xl:px-6">
+        <div className="mb-5 flex items-center gap-3">
           <div className="bg-muted grid size-9 place-items-center rounded-lg">
             <UsersRound className="size-4" />
           </div>
@@ -119,8 +119,8 @@ export default async function LeadsPage() {
     total_ms: elapsedMs(totalStartedAt),
   });
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8 flex items-center gap-3">
+    <div className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-5 sm:py-6 xl:px-6">
+      <div className="mb-5 flex items-center gap-3">
         <div className="bg-muted grid size-9 place-items-center rounded-lg">
           <UsersRound className="size-4" />
         </div>

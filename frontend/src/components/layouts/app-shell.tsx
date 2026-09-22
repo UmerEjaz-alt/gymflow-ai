@@ -30,7 +30,7 @@ export function AppShell({
 
   return (
     <ToastProvider>
-      <div className="bg-muted/30 flex min-h-screen">
+      <div className="bg-muted/30 flex h-dvh min-h-0 overflow-hidden">
         {mobileSidebarOpen ? (
           <button
             aria-label="Close navigation"
@@ -46,7 +46,7 @@ export function AppShell({
           mobileOpen={mobileSidebarOpen}
           onNavigate={() => setMobileSidebarOpen(false)}
         />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TopNav
             onMobileMenuToggle={() => setMobileSidebarOpen((open) => !open)}
             onSidebarToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
@@ -57,7 +57,9 @@ export function AppShell({
             branches={branches}
             activeBranchId={activeBranchId}
           />
-          <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+            {children}
+          </main>
         </div>
       </div>
     </ToastProvider>

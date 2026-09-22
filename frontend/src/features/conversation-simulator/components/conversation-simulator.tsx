@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowLeft,
   Bot,
   CheckCheck,
   GitBranch,
@@ -124,6 +125,7 @@ export function ConversationSimulator({
   );
   const [error, setError] = useState(initialError ?? "");
   const [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadedConversationIds = useRef(
     new Set(initialConversations[0] ? [initialConversations[0].id] : []),
@@ -137,7 +139,6 @@ export function ConversationSimulator({
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
     });
   }, [selected?.messages.length, selectedId, isSending]);
 
@@ -197,6 +198,7 @@ export function ConversationSimulator({
     setConversations((current) => [customer, ...current]);
     loadedConversationIds.current.add(customer.id);
     setSelectedId(customer.id);
+    setMobileDetailOpen(true);
     setName("");
     setPhone("");
     setIsCreateOpen(false);
@@ -246,6 +248,7 @@ export function ConversationSimulator({
 
   async function selectConversation(conversation: SimulatorConversation) {
     setSelectedId(conversation.id);
+    setMobileDetailOpen(true);
     if (loadedConversationIds.current.has(conversation.id)) return;
 
     setError("");
@@ -278,12 +281,17 @@ export function ConversationSimulator({
         </p>
       ) : null}
 
-      <section className="border-border bg-card grid min-h-[620px] overflow-hidden rounded-2xl border shadow-sm lg:grid-cols-[340px_minmax(0,1fr)]">
+      <section className="border-border bg-card grid min-h-0 flex-1 overflow-hidden rounded-xl border shadow-sm lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)]">
         {/* ── Sidebar: Customer List ── */}
-        <aside className="border-border flex min-h-0 flex-col border-b lg:border-r lg:border-b-0">
-          <div className="border-border flex items-center justify-between border-b px-4 py-4">
+        <aside
+          className={cn(
+            "border-border min-h-0 flex-col border-r",
+            mobileDetailOpen ? "hidden lg:flex" : "flex",
+          )}
+        >
+          <div className="border-border flex shrink-0 items-center justify-between border-b px-3 py-2.5">
             <div>
-              <p className="font-semibold">Customers</p>
+              <p className="text-sm font-semibold">Customers</p>
               <p className="text-muted-foreground text-xs">
                 Scoped to this gym and branch
               </p>
@@ -296,27 +304,28 @@ export function ConversationSimulator({
               <Plus aria-hidden className="size-4" />
             </Button>
           </div>
-          <div className="max-h-56 divide-y overflow-y-auto lg:max-h-none lg:flex-1">
+          <div className="min-h-0 flex-1 divide-y overflow-y-auto overscroll-contain">
             {conversations.map((conversation) => {
               const isShared = conversation.branch_id === null;
 
               return (
                 <button
+                  aria-pressed={selectedId === conversation.id}
                   key={conversation.id}
                   type="button"
                   onClick={() => void selectConversation(conversation)}
                   className={cn(
-                    "hover:bg-accent flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
+                    "hover:bg-accent flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors",
                     selectedId === conversation.id && "bg-accent",
                   )}
                 >
-                  <Avatar>
+                  <Avatar className="size-8">
                     {initials(conversation.customer_name, conversation.customer_phone)}
                   </Avatar>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2">
                       <span className="flex min-w-0 items-center gap-1.5">
-                        <strong className="truncate text-sm">
+                        <strong className="truncate text-[13px]">
                           {conversation.customer_name || "Unnamed customer"}
                         </strong>
                         {conversation.id !== selectedId &&
@@ -360,25 +369,40 @@ export function ConversationSimulator({
 
         {/* ── Main Chat Panel ── */}
         {selected ? (
-          <div className="bg-muted/35 flex min-h-0 flex-col">
-            <header className="border-border bg-card flex items-center gap-3 border-b px-5 py-3">
-              <Avatar>
+          <div
+            className={cn(
+              "bg-muted/35 min-h-0 flex-col",
+              mobileDetailOpen ? "flex" : "hidden lg:flex",
+            )}
+          >
+            <header className="border-border bg-card flex shrink-0 items-center gap-2 border-b px-2.5 py-2 sm:px-3">
+              <Button
+                aria-label="Back to conversations"
+                className="shrink-0 lg:hidden"
+                onClick={() => setMobileDetailOpen(false)}
+                size="icon"
+                type="button"
+                variant="ghost"
+              >
+                <ArrowLeft aria-hidden className="size-4" />
+              </Button>
+              <Avatar className="size-7 text-[11px]">
                 {initials(selected.customer_name, selected.customer_phone)}
               </Avatar>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold">
+                <p className="truncate text-[13px] font-semibold">
                   {selected.customer_name || "Unnamed customer"}
                 </p>
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground truncate text-xs">
                   {selected.customer_phone} ·{" "}
                   {selected.source === "whatsapp" ? "WhatsApp" : "Simulator"}
                 </p>
               </div>
 
               {/* Destination Badge */}
-              <div className="flex items-center gap-1.5">
+              <div className="flex min-w-0 shrink items-center gap-1.5">
                 {selected.branch_id === null ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-2.5 py-1 text-[11px] font-medium text-violet-700 dark:text-violet-400">
+                  <span className="inline-flex max-w-36 items-center gap-1 truncate rounded-full bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-700 sm:max-w-56 dark:text-violet-400">
                     <Globe className="size-3" />
                     {selectedEp?.label ||
                       selectedEp?.phone_number ||
@@ -386,7 +410,7 @@ export function ConversationSimulator({
                     (All branches)
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-400">
+                  <span className="inline-flex max-w-36 items-center gap-1 truncate rounded-full bg-blue-500/10 px-2 py-1 text-[11px] font-medium text-blue-700 sm:max-w-56 dark:text-blue-400">
                     <GitBranch className="size-3" />
                     {selectedBranch?.branch_name ?? "Dedicated Branch"}
                   </span>
@@ -396,91 +420,100 @@ export function ConversationSimulator({
 
             <div
               ref={scrollRef}
-              className="flex-1 space-y-3 overflow-y-auto px-4 py-5 sm:px-6"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4"
             >
-              {loadingHistoryId === selected.id ? (
-                <div
-                  className="mx-auto mt-16 w-full max-w-sm space-y-3"
-                  aria-live="polite"
-                >
-                  <div className="bg-card h-12 w-4/5 animate-pulse rounded-xl" />
-                  <div className="bg-card ml-auto h-12 w-3/5 animate-pulse rounded-xl" />
-                  <p className="text-muted-foreground text-center text-xs">
-                    Loading conversation…
-                  </p>
-                </div>
-              ) : !selected.messages.length ? (
-                <div className="text-muted-foreground bg-card mx-auto mt-16 max-w-sm rounded-xl px-5 py-4 text-center text-sm shadow-sm">
-                  {selected.branch_id === null ? (
-                    <>
-                      <Globe className="mx-auto mb-2 size-5 text-violet-500" />
-                      <p className="text-foreground mb-1 font-medium">
-                        Shared WhatsApp Number
-                      </p>
-                      <p>
-                        This customer messaged your central WhatsApp number. The AI
-                        receptionist will ask which branch they want before providing
-                        pricing or packages.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <GitBranch className="mx-auto mb-2 size-5 text-blue-500" />
-                      <p className="text-foreground mb-1 font-medium">
-                        {selectedBranch?.branch_name ?? "Branch"} WhatsApp
-                      </p>
-                      <p>
-                        This customer messaged this branch’s dedicated WhatsApp number.
-                        The AI receptionist has this branch’s full pricing, schedule,
-                        and facilities.
-                      </p>
-                    </>
-                  )}
-                </div>
-              ) : null}
+              <div className="mx-auto w-full max-w-4xl space-y-2">
+                {loadingHistoryId === selected.id ? (
+                  <div
+                    className="mx-auto mt-16 w-full max-w-sm space-y-3"
+                    aria-live="polite"
+                  >
+                    <div className="bg-card h-12 w-4/5 animate-pulse rounded-xl" />
+                    <div className="bg-card ml-auto h-12 w-3/5 animate-pulse rounded-xl" />
+                    <p className="text-muted-foreground text-center text-xs">
+                      Loading conversation…
+                    </p>
+                  </div>
+                ) : !selected.messages.length ? (
+                  <div className="text-muted-foreground bg-card mx-auto mt-16 max-w-sm rounded-xl px-5 py-4 text-center text-sm shadow-sm">
+                    {selected.branch_id === null ? (
+                      <>
+                        <Globe className="mx-auto mb-2 size-5 text-violet-500" />
+                        <p className="text-foreground mb-1 font-medium">
+                          Shared WhatsApp Number
+                        </p>
+                        <p>
+                          This customer messaged your central WhatsApp number. The AI
+                          receptionist will ask which branch they want before providing
+                          pricing or packages.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <GitBranch className="mx-auto mb-2 size-5 text-blue-500" />
+                        <p className="text-foreground mb-1 font-medium">
+                          {selectedBranch?.branch_name ?? "Branch"} WhatsApp
+                        </p>
+                        <p>
+                          This customer messaged this branch’s dedicated WhatsApp
+                          number. The AI receptionist has this branch’s full pricing,
+                          schedule, and facilities.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                ) : null}
 
-              {loadingHistoryId !== selected.id
-                ? selected.messages.map((item) => (
-                    <ChatMessage item={item} key={item.id} />
-                  ))
-                : null}
+                {loadingHistoryId !== selected.id
+                  ? selected.messages.map((item) => (
+                      <ChatMessage item={item} key={item.id} />
+                    ))
+                  : null}
 
-              {isSending ? (
-                <div className="bg-card flex w-fit items-center gap-2 rounded-2xl rounded-bl-md px-4 py-3 text-sm shadow-sm">
-                  <LoaderCircle className="size-4 animate-spin" /> Kroway is typing…
-                </div>
-              ) : null}
+                {isSending ? (
+                  <div className="bg-card flex w-fit items-center gap-2 rounded-2xl rounded-bl-md px-4 py-3 text-sm shadow-sm">
+                    <LoaderCircle className="size-4 animate-spin" /> Kroway is typing…
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             {selected.source === "simulator" ? (
               <form
                 onSubmit={sendMessage}
-                className="border-border bg-card flex gap-2 border-t p-3 sm:p-4"
+                className="border-border bg-card shrink-0 border-t px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]"
               >
-                <Input
-                  aria-label="Customer message"
-                  disabled={isSending}
-                  onChange={(event) => setMessage(event.target.value)}
-                  placeholder={`Message as ${selected.customer_name || "customer"}…`}
-                  value={message}
-                />
-                <Button
-                  aria-label="Send message"
-                  disabled={isSending || !message.trim()}
-                  size="icon"
-                  type="submit"
-                >
-                  <SendHorizonal aria-hidden className="size-4" />
-                </Button>
+                <div className="mx-auto flex w-full max-w-4xl gap-2">
+                  <Input
+                    aria-label="Customer message"
+                    disabled={isSending}
+                    onChange={(event) => setMessage(event.target.value)}
+                    placeholder={`Message as ${selected.customer_name || "customer"}…`}
+                    value={message}
+                  />
+                  <Button
+                    aria-label="Send message"
+                    disabled={isSending || !message.trim()}
+                    size="icon"
+                    type="submit"
+                  >
+                    <SendHorizonal aria-hidden className="size-4" />
+                  </Button>
+                </div>
               </form>
             ) : (
-              <p className="border-border bg-card text-muted-foreground border-t p-4 text-center text-xs">
+              <p className="border-border bg-card text-muted-foreground shrink-0 border-t px-4 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] text-center text-xs">
                 Real WhatsApp conversations are shown read-only.
               </p>
             )}
           </div>
         ) : (
-          <div className="text-muted-foreground flex flex-col items-center justify-center p-8 text-center">
+          <div
+            className={cn(
+              "text-muted-foreground min-h-0 flex-col items-center justify-center p-8 text-center",
+              mobileDetailOpen ? "flex" : "hidden lg:flex",
+            )}
+          >
             <Bot className="mb-4 size-9" />
             <p className="text-foreground font-medium">Start a conversation</p>
             <p className="mt-1 max-w-xs text-sm">
@@ -546,7 +579,7 @@ export function ConversationSimulator({
             ) : activeEndpoints.length > 1 ? (
               // Multiple active endpoints: clean dropdown
               <select
-                className="border-input bg-background text-foreground w-full rounded-md border px-3 py-2 text-xs font-medium shadow-sm focus:outline-none"
+                className="border-input bg-background text-foreground focus-visible:ring-ring w-full rounded-md border px-3 py-2 text-xs font-medium shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                 value={selectedEndpointId}
                 onChange={(e) => setSelectedEndpointId(e.target.value)}
               >
@@ -597,7 +630,7 @@ function ChatMessage({ item }: { item: Message }) {
     <div className={cn("flex", isCustomer ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl px-3 py-2 shadow-sm sm:max-w-[70%]",
+          "max-w-[88%] rounded-xl px-2.5 py-1.5 shadow-sm sm:max-w-[76%] lg:max-w-[min(72%,42rem)]",
           isCustomer
             ? "bg-primary text-primary-foreground rounded-br-md"
             : "bg-card rounded-bl-md",
@@ -628,10 +661,12 @@ function MessageContent({ item }: { item: Message }) {
       <>
         <img
           alt={item.content || "Gym media"}
-          className="mb-2 max-h-64 rounded-lg object-cover"
+          className="mb-1.5 max-h-52 rounded-md object-cover"
           src={mediaUrl}
         />
-        <p className="text-sm leading-5 whitespace-pre-wrap">{item.content}</p>
+        <p className="text-sm leading-5 whitespace-pre-wrap lg:text-[13px] lg:leading-[1.125rem]">
+          {item.content}
+        </p>
       </>
     );
   }
@@ -647,5 +682,9 @@ function MessageContent({ item }: { item: Message }) {
       </a>
     );
   }
-  return <p className="text-sm leading-5 whitespace-pre-wrap">{item.content}</p>;
+  return (
+    <p className="text-sm leading-5 whitespace-pre-wrap lg:text-[13px] lg:leading-[1.125rem]">
+      {item.content}
+    </p>
+  );
 }

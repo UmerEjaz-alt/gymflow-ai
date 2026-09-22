@@ -12,9 +12,9 @@ export function WorkspaceLoading({
     <div
       aria-label="Loading workspace"
       aria-live="polite"
-      className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"
+      className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-5 sm:py-6 xl:px-6"
     >
-      <div className="mb-8 flex items-center gap-3">
+      <div className="mb-5 flex items-center gap-3">
         <div className="bg-muted size-9 animate-pulse rounded-lg" />
         <div className="space-y-2">
           <div className="bg-muted h-5 w-32 animate-pulse rounded" />
