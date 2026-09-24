@@ -6,7 +6,10 @@
  * the approved reply. Delivery remains the responsibility of the adapter.
  */
 
-import type { IncomingMessageEvent } from "@/services/conversation-manager.server";
+import type {
+  ConversationContext,
+  IncomingMessageEvent,
+} from "@/services/conversation-manager.server";
 import { handleIncomingMessage } from "@/services/conversation-manager.server";
 import { generateValidatedReply } from "@/services/ai-pipeline.server";
 import { saveAIReply } from "@/services/conversation-reply.server";
@@ -39,16 +42,21 @@ export type ProcessConversationTurnResult = {
 
 export async function processIncomingConversationTurn(
   event: IncomingMessageEvent,
+  preparedContext?: ConversationContext,
 ): Promise<ProcessConversationTurnResult> {
   const totalStartedAt = performance.now();
   let idempotencyMs = 0;
+  // Inbound provider identity and outbound transport are separate concerns.
+  // Preserve the established WhatsApp behavior while SMS remains persisted-only.
+  const queueWhatsAppDelivery =
+    (event.source ?? "whatsapp") === "whatsapp" && Boolean(event.whatsappMessageId);
   const usesTransactionalEndpointIngestion = Boolean(
     event.whatsappMessageId &&
     event.endpointId &&
     event.aiRateLimit &&
     (event.source ?? "whatsapp") === "whatsapp",
   );
-  if (event.whatsappMessageId && !usesTransactionalEndpointIngestion) {
+  if (!preparedContext && event.whatsappMessageId && !usesTransactionalEndpointIngestion) {
     const idempotencyStartedAt = performance.now();
     const existing = await getMessageByWhatsAppMessageId(event.whatsappMessageId);
     idempotencyMs = elapsedMs(idempotencyStartedAt);
@@ -71,8 +79,10 @@ export async function processIncomingConversationTurn(
   }
 
   const managerStartedAt = performance.now();
-  const managerResult = await handleIncomingMessage(event);
-  const managerMs = elapsedMs(managerStartedAt);
+  const managerResult = preparedContext
+    ? { data: preparedContext, error: null }
+    : await handleIncomingMessage(event);
+  const managerMs = preparedContext ? 0 : elapsedMs(managerStartedAt);
   if (managerResult.error || !managerResult.data) {
     return {
       customerMessage: null,
@@ -111,7 +121,7 @@ export async function processIncomingConversationTurn(
       content: event.safeFallbackReplyText,
       metadata: {
         system_fallback: "voice_transcription_failed",
-        ...(event.whatsappMessageId ? { outbound_delivery: "whatsapp_outbox" } : {}),
+        ...(queueWhatsAppDelivery ? { outbound_delivery: "whatsapp_outbox" } : {}),
       },
     });
     if (fallbackResult.error) {
@@ -264,8 +274,11 @@ export async function processIncomingConversationTurn(
       allowedBranchIds,
       resolvedBranchSelectionId,
       persistedTurn,
-      Boolean(event.whatsappMessageId),
-      Boolean(event.whatsappMessageId),
+      queueWhatsAppDelivery,
+      queueWhatsAppDelivery,
+      0,
+      0,
+      event.source === "sms" ? context.latestCustomerMessage.id : null,
     );
     const persistenceMs = elapsedMs(persistenceStartedAt);
 

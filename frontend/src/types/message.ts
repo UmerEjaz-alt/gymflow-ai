@@ -19,6 +19,11 @@ export type Message = {
   sender_type: SenderType;
   message_type: MessageType;
   whatsapp_message_id: string | null;
+  /** Provider-scoped inbound SMS identity. Null for non-SMS messages/replies. */
+  sms_provider?: string | null;
+  sms_message_id?: string | null;
+  /** First AI row anchoring one logical response to an inbound SMS. */
+  sms_inbound_reply_to_message_id?: string | null;
   content: string;
   metadata: Record<string, unknown>;
   delivered_at: string | null;
@@ -32,6 +37,9 @@ export type CreateMessagePayload = {
   sender_type: SenderType;
   message_type?: MessageType;
   whatsapp_message_id?: string | null;
+  sms_provider?: string | null;
+  sms_message_id?: string | null;
+  sms_inbound_reply_to_message_id?: string | null;
   content: string;
   metadata?: Record<string, unknown>;
   delivered_at?: string | null;

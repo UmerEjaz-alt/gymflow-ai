@@ -237,7 +237,12 @@ export function BookingDetailSheet({
                 </span>
               </div>
               <span className="text-muted-foreground text-[11px]">
-                via {booking.source === "whatsapp" ? "WhatsApp" : "Manual entry"}
+                via{" "}
+                {booking.source === "whatsapp"
+                  ? "WhatsApp"
+                  : booking.source === "sms"
+                    ? "SMS"
+                    : "Manual entry"}
               </span>
             </div>
 

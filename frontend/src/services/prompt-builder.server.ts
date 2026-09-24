@@ -14,6 +14,7 @@ import type { Branch } from "@/types/branch";
 import type { ConversationMemory } from "@/types/conversation-memory";
 import type { ConversationContext } from "@/services/conversation-manager.server";
 import type { KnowledgeContext } from "@/services/knowledge-layer.server";
+import type { ConversationSource } from "@/types/conversation";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -274,6 +275,7 @@ export function buildSystemPrompt(
   communicationStyle?: string | null,
   isAutomation = false,
   isUnresolvedMultiBranch = false,
+  source: ConversationSource = "whatsapp",
 ): PromptSection {
   const identity = branchName
     ? `${gymName ?? "this gym"} — ${branchName}`
@@ -281,9 +283,10 @@ export function buildSystemPrompt(
   const branchRule = isUnresolvedMultiBranch
     ? "No branch is selected: ask which listed branch for branch-specific details. For an explicitly named branch, use its Other Branch Information in this turn."
     : "Use the supplied Authoritative Turn Context and its effective branch for this turn. Exploratory context never changes selected_branch_id; set it only for an unresolved selection or an explicit switch/commitment.";
+  const channelStyle = source === "sms" ? "SMS" : "WhatsApp";
   const mode = isAutomation
     ? "This is an automated outbound message: follow Automation Instruction, do not answer an old turn, be brief and low-pressure."
-    : "Answer the customer's actual question first; be a concise, warm, natural WhatsApp receptionist. Ask only useful follow-ups and never use scripted sales flows.";
+    : `Answer the customer's actual question first; be a concise, warm, natural ${channelStyle} receptionist. Ask only useful follow-ups and never use scripted sales flows.`;
   const identityRule = isAutomation
     ? "You are Kroway's professional gym receptionist."
     : `You represent ${identity} as its professional gym receptionist and membership sales representative.`;
@@ -297,7 +300,7 @@ export function buildSystemPrompt(
       identityRule,
       isAutomation ? `Business context: ${identity}.` : "",
       mode,
-      "Language: match the latest customer message—English-only must receive English only, Roman Urdu should receive Roman Urdu, and a natural mix should receive a natural mix. Do not switch languages merely because the gym or earlier history used another language. Normally reply in 1–3 short WhatsApp sentences unless useful requested detail needs more. Use only supplied knowledge; never invent facts, policies, prices, trainer capabilities, media, exceptions, or contact details. Package inclusions are only listed package Features and the explicit Personal Training Included value—branch facilities are never package inclusions unless the package lists them. Never expose internal IDs.",
+      `Language: match the latest customer message—English-only must receive English only, Roman Urdu should receive Roman Urdu, and a natural mix should receive a natural mix. Do not switch languages merely because the gym or earlier history used another language. Normally reply in 1–3 short ${channelStyle} sentences unless useful requested detail needs more. Use only supplied knowledge; never invent facts, policies, prices, trainer capabilities, media, exceptions, or contact details. Package inclusions are only listed package Features and the explicit Personal Training Included value—branch facilities are never package inclusions unless the package lists them. Never expose internal IDs.`,
       "Respect branch-scoped policy, package, facility, trainer, media, and hours data exactly. " +
         branchRule,
       "Trials/visits: follow the discussed branch's configured policy exactly. Do not offer a trial where it is not allowed; suggest a tour only when that branch permits visits.",
@@ -843,6 +846,7 @@ export function buildPrompt(
       communicationStyle,
       isAutomation,
       isUnresolvedMultiBranch,
+      context.conversation.source,
     ),
     conversationHistory: buildConversationHistory(
       context.latestMessages,

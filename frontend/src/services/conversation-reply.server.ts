@@ -58,6 +58,7 @@ export async function saveAIReply(
   atomicWhatsAppTextPersistence = false,
   concurrencyRetryCount = 0,
   priorAttemptMs = 0,
+  smsInboundReplyToMessageId: string | null = null,
 ): Promise<SaveAIReplyResult> {
   const totalStartedAt = performance.now();
   // Guard: skip unapproved responses without writing anything
@@ -238,6 +239,7 @@ export async function saveAIReply(
         atomicWhatsAppTextPersistence,
         concurrencyRetryCount + 1,
         priorAttemptMs + elapsedMs(totalStartedAt),
+        smsInboundReplyToMessageId,
       );
     }
     if (row.outcome !== "saved" || !row.message_row) {
@@ -301,6 +303,9 @@ export async function saveAIReply(
       conversation_id: conversationId,
       sender_type: "ai",
       message_type: isText ? "text" : "image",
+      ...(savedMessages.length === 0 && smsInboundReplyToMessageId
+        ? { sms_inbound_reply_to_message_id: smsInboundReplyToMessageId }
+        : {}),
       content: isText ? item.text : (item.caption ?? asset!.title),
       metadata: isText
         ? {

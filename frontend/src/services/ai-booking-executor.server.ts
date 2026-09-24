@@ -246,6 +246,7 @@ export async function executeAIBookingAction(params: {
       const duration = action.duration_minutes || DEFAULT_DURATIONS[bookingType] || 30;
       const customerName =
         conversation.customer_name || customerMemory?.customer_name || "Customer";
+      const bookingSource = conversation.source === "sms" ? "sms" : "whatsapp";
 
       const payload: CreateBookingPayload = {
         gym_id: gym.id,
@@ -257,8 +258,11 @@ export async function executeAIBookingAction(params: {
         booking_type: bookingType,
         scheduled_at: scheduledAtUtc,
         duration_minutes: duration,
-        source: "whatsapp",
-        notes: "Booked via WhatsApp conversation",
+        source: bookingSource,
+        notes:
+          bookingSource === "sms"
+            ? "Booked via SMS conversation"
+            : "Booked via WhatsApp conversation",
       };
 
       const claim = await claimBookingMutation(

@@ -5,7 +5,8 @@ import type { ConversationUnderstanding } from "@/types/understanding";
 export type ConversationStatus = "active" | "human" | "closed";
 
 /** The channel that supplied the customer's message. */
-export type ConversationSource = "whatsapp" | "simulator" | "playground" | "import";
+export type ConversationSource =
+  "whatsapp" | "sms" | "simulator" | "playground" | "import";
 
 /** Allowed values for the lead pipeline stage field. */
 export type LeadStage = "new_lead" | "qualified" | "trial_booked" | "member" | "lost";
@@ -23,6 +24,8 @@ export type Conversation = {
   branch_id: string | null;
   /** WhatsApp endpoint / destination this conversation arrived on. */
   whatsapp_endpoint_id?: string | null;
+  /** SMS endpoint / destination this conversation arrived on. */
+  sms_endpoint_id?: string | null;
   customer_phone: string;
   customer_name: string | null;
   source: ConversationSource;
@@ -45,6 +48,7 @@ export type CreateConversationPayload = {
   gym_id: string;
   branch_id?: string | null;
   whatsapp_endpoint_id?: string | null;
+  sms_endpoint_id?: string | null;
   customer_phone: string;
   customer_name?: string | null;
   source?: ConversationSource;

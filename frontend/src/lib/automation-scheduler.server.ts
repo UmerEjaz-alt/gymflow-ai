@@ -46,13 +46,25 @@ async function runAllGyms(): Promise<void> {
       await import("@/services/automation-runner.server");
     const { recoverWhatsAppDeliveries } =
       await import("@/services/whatsapp-outbox.server");
+    const { recoverSmsInboundProcessing } =
+      await import("@/services/sms-inbound-processing.server");
 
-    const { totals, recovered } = await runWithSystemSupabase(async () => ({
-      recovered: await recoverWhatsAppDeliveries(50),
-      totals: await runAllGymAutomations(),
-    }));
+    const { totals, recovered, recoveredSms } = await runWithSystemSupabase(async () => {
+      const recovered = await recoverWhatsAppDeliveries(50);
+      const totals = await runAllGymAutomations();
+      let recoveredSms = { completed: 0, failed: 0, dead: 0, skipped: 0, deferred: 0 };
+      try {
+        recoveredSms = await recoverSmsInboundProcessing(5);
+      } catch (error) {
+        console.error(
+          "[automation-scheduler] SMS inbound recovery failed:",
+          error instanceof Error ? error.message : error,
+        );
+      }
+      return { totals, recovered, recoveredSms };
+    });
     console.log(
-      `[automation-scheduler] Processed automations for ${totals.gyms} gym(s): sent=${totals.sent} skipped=${totals.skipped} failed=${totals.failed} recovered=${recovered.sent}`,
+      `[automation-scheduler] Processed automations for ${totals.gyms} gym(s): sent=${totals.sent} skipped=${totals.skipped} failed=${totals.failed} recovered=${recovered.sent} sms_completed=${recoveredSms.completed} sms_failed=${recoveredSms.failed} sms_dead=${recoveredSms.dead}`,
     );
 
     lastRunAt = Date.now();

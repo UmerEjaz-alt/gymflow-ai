@@ -14,6 +14,9 @@
     "verify:turn-state": "node scripts/verify-authoritative-turn-state.mjs",
     "verify:performance-regressions": "node scripts/verify-performance-regressions.mjs",
     "verify:whatsapp-latency": "node scripts/verify-whatsapp-latency-optimizations.mjs",
+    "verify:sms-identity": "node scripts/verify-sms-identity-foundation.mjs",
+    "verify:sms-inbound": "node scripts/verify-sms-inbound.mjs",
+    "verify:sms-reliability": "node scripts/verify-sms-inbound-reliability.mjs",
     "verify:sales-intelligence": "node scripts/verify-sales-intelligence.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

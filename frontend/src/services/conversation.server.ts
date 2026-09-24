@@ -44,9 +44,15 @@ export async function getConversationByPhone(
   phone: string,
   endpointId?: string | null,
   branchId?: string | null,
+  identity: {
+    source?: ConversationSource;
+    smsEndpointId?: string | null;
+  } = {},
 ): Promise<ServiceResult<Conversation | null>> {
   const totalStartedAt = performance.now();
   const supabase = await createServerSupabaseClient();
+  const source = identity.source ?? "whatsapp";
+  const smsEndpointId = identity.smsEndpointId ?? null;
   let endpointQueryMs = 0;
   let branchQueryMs = 0;
   let fallbackQueryMs = 0;
@@ -61,6 +67,30 @@ export async function getConversationByPhone(
       total_ms: elapsedMs(totalStartedAt),
     });
 
+  // SMS endpoint identity is authoritative. A customer may contact multiple
+  // numbers owned by the same gym, so branch/phone fallback must not merge
+  // those endpoint-backed conversations.
+  if (smsEndpointId) {
+    const startedAt = performance.now();
+    const { data: smsEndpointMatch, error: smsError } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("gym_id", gymId)
+      .eq("customer_phone", phone)
+      .eq("source", source)
+      .eq("sms_endpoint_id", smsEndpointId)
+      .maybeSingle();
+    endpointQueryMs = elapsedMs(startedAt);
+    queryCount += 1;
+
+    if (smsError) {
+      logLookup("sms_endpoint_error");
+      return { data: null, error: smsError.message };
+    }
+    logLookup(smsEndpointMatch ? "sms_endpoint_match" : "not_found");
+    return { data: smsEndpointMatch as Conversation | null, error: null };
+  }
+
   // 1. If endpointId is known, try exact match by (gym_id, whatsapp_endpoint_id, customer_phone)
   if (endpointId) {
     const startedAt = performance.now();
@@ -69,6 +99,7 @@ export async function getConversationByPhone(
       .select("*")
       .eq("gym_id", gymId)
       .eq("customer_phone", phone)
+      .eq("source", source)
       .eq("whatsapp_endpoint_id", endpointId)
       .maybeSingle();
     endpointQueryMs = elapsedMs(startedAt);
@@ -92,6 +123,7 @@ export async function getConversationByPhone(
       .select("*")
       .eq("gym_id", gymId)
       .eq("customer_phone", phone)
+      .eq("source", source)
       .eq("branch_id", branchId)
       .maybeSingle();
     branchQueryMs = elapsedMs(startedAt);
@@ -112,7 +144,8 @@ export async function getConversationByPhone(
     .from("conversations")
     .select("*")
     .eq("gym_id", gymId)
-    .eq("customer_phone", phone);
+    .eq("customer_phone", phone)
+    .eq("source", source);
 
   if (!endpointId && !branchId) {
     query = query.is("branch_id", null);

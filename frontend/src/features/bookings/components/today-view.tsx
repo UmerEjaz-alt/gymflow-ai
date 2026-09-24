@@ -110,6 +110,13 @@ export function TodayView({
                     >
                       WhatsApp
                     </span>
+                  ) : booking.source === "sms" ? (
+                    <span
+                      title="Booked via SMS"
+                      className="py-0.2 inline-flex items-center rounded-full border border-blue-500/20 bg-blue-500/10 px-1.5 text-[10px] font-medium text-blue-600 dark:text-blue-400"
+                    >
+                      SMS
+                    </span>
                   ) : null}
                 </div>
 

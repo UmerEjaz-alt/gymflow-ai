@@ -6,6 +6,7 @@ import {
   runGymAutomations,
 } from "@/services/automation-runner.server";
 import { recoverWhatsAppDeliveries } from "@/services/whatsapp-outbox.server";
+import { recoverSmsInboundProcessing } from "@/services/sms-inbound-processing.server";
 
 function isAuthorized(request: NextRequest): boolean {
   const authorization = request.headers.get("authorization");
@@ -47,15 +48,24 @@ async function handleRun(request: NextRequest) {
 
   const gymId = await resolveGymId(request);
   try {
-    const { result, recovered } = await runWithSystemSupabase(async () => {
+    const { result, recovered, recoveredSms } = await runWithSystemSupabase(async () => {
       const recovered = await recoverWhatsAppDeliveries(50);
       const result = gymId
         ? await runGymAutomations(gymId)
         : await runAllGymAutomations();
-      return { result, recovered };
+      let recoveredSms = { completed: 0, failed: 0, dead: 0, skipped: 0, deferred: 0 };
+      try {
+        recoveredSms = await recoverSmsInboundProcessing(5);
+      } catch (error) {
+        console.error(
+          "[automation-runner] SMS inbound recovery failed:",
+          error instanceof Error ? error.message : error,
+        );
+      }
+      return { result, recovered, recoveredSms };
     });
     console.log(
-      `[automation-runner] ${gymId ? `gym=${gymId}` : `gyms=${"gyms" in result ? result.gyms : 1}`} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} recovered=${recovered.sent}`,
+      `[automation-runner] ${gymId ? `gym=${gymId}` : `gyms=${"gyms" in result ? result.gyms : 1}`} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} recovered=${recovered.sent} sms_completed=${recoveredSms.completed} sms_failed=${recoveredSms.failed} sms_dead=${recoveredSms.dead}`,
     );
     return NextResponse.json(result);
   } catch (error) {

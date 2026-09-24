@@ -30,6 +30,8 @@ export type IncomingMessageEvent = {
    * WhatsApp endpoint / destination this message arrived on.
    */
   endpointId?: string | null;
+  /** SMS endpoint / destination this message arrived on. */
+  smsEndpointId?: string | null;
   /**
    * Branch this message arrived on (when dedicated to a branch).
    * Null for shared gym endpoints.
@@ -42,6 +44,9 @@ export type IncomingMessageEvent = {
   content: string;
   /** Stable channel message ID used for database-backed idempotency. */
   whatsappMessageId?: string | null;
+  /** Provider-scoped SMS identity. Never implies outbound delivery. */
+  smsProvider?: string | null;
+  smsMessageId?: string | null;
   metadata?: Record<string, unknown>;
   /**
    * A channel-decoding failure response. It is persisted without invoking the
@@ -160,6 +165,67 @@ async function ingestEstablishedWhatsAppMessage(
   };
 }
 
+async function ingestSmsMessage(
+  event: IncomingMessageEvent,
+  now: string,
+): Promise<
+  { data: EstablishedIngestionResult; error: null } | { data: null; error: string }
+> {
+  const aiRateLimit = event.aiRateLimit;
+  if (
+    !aiRateLimit ||
+    !event.smsEndpointId ||
+    !event.smsProvider ||
+    !event.smsMessageId
+  ) {
+    return { data: null, error: "Complete SMS ingestion identity is required." };
+  }
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("ingest_sms_message", {
+    p_gym_id: event.gymId,
+    p_sms_endpoint_id: event.smsEndpointId,
+    p_provider: event.smsProvider,
+    p_provider_message_id: event.smsMessageId,
+    p_customer_phone: event.customerPhone,
+    p_customer_name: event.customerName ?? null,
+    p_message_type: event.messageType,
+    p_content: event.content,
+    p_metadata: event.metadata ?? {},
+    p_last_message_at: now,
+    p_customer_bucket: aiRateLimit.customerBucket,
+    p_customer_limit: aiRateLimit.customerLimit,
+    p_gym_bucket: aiRateLimit.gymBucket,
+    p_gym_limit: aiRateLimit.gymLimit,
+    p_window_seconds: aiRateLimit.windowSeconds,
+    p_history_limit: LATEST_MESSAGES_LIMIT,
+  });
+  const row = Array.isArray(data) ? data[0] : null;
+  if (error || !row) {
+    return { data: null, error: error?.message ?? "SMS ingestion was unavailable." };
+  }
+  return {
+    data: {
+      outcome: row.outcome as EstablishedIngestionResult["outcome"],
+      conversation: row.conversation_row as Conversation | null,
+      message: row.message_row as Message | null,
+      recentMessages: Array.isArray(row.recent_messages)
+        ? (row.recent_messages as Message[])
+        : [],
+      timings: {
+        lookupMs: 0,
+        persistenceMs: 0,
+        updateMs: 0,
+        historyMs: 0,
+        rateLimitMs: 0,
+      },
+      customerAllowed:
+        typeof row.customer_allowed === "boolean" ? row.customer_allowed : null,
+      gymAllowed: typeof row.gym_allowed === "boolean" ? row.gym_allowed : null,
+    },
+    error: null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Orchestration — inbound message
 // ---------------------------------------------------------------------------
@@ -185,6 +251,7 @@ export async function handleIncomingMessage(
   const {
     gymId,
     endpointId,
+    smsEndpointId,
     branchId,
     customerPhone,
     customerName,
@@ -196,6 +263,51 @@ export async function handleIncomingMessage(
   } = event;
   const now = new Date().toISOString();
   let effectiveSuppressAI = Boolean(event.suppressAI);
+
+  if (source === "sms") {
+    const smsIngestion = await ingestSmsMessage(event, now);
+    if (smsIngestion.error || !smsIngestion.data) {
+      return { data: null, error: `SMS ingestion failed: ${smsIngestion.error}` };
+    }
+    const { conversation, message } = smsIngestion.data;
+    if (!conversation || !message || smsIngestion.data.outcome === "not_established") {
+      return { data: null, error: "SMS ingestion returned an invalid result." };
+    }
+    const duplicateInbound = smsIngestion.data.outcome === "duplicate";
+    const rateLimitWasConsumed =
+      smsIngestion.data.customerAllowed !== null &&
+      smsIngestion.data.gymAllowed !== null;
+    if (rateLimitWasConsumed) {
+      effectiveSuppressAI ||=
+        smsIngestion.data.customerAllowed !== true ||
+        smsIngestion.data.gymAllowed !== true;
+    }
+    logPerformance("sms.conversation_load", {
+      source,
+      message_type: messageType,
+      duplicate: duplicateInbound,
+      rate_limit_allowed: rateLimitWasConsumed ? !effectiveSuppressAI : null,
+      history_rows_loaded: smsIngestion.data.recentMessages.length,
+      total_ms: elapsedMs(totalStartedAt),
+    });
+    return {
+      data: {
+        conversation,
+        latestMessages: smsIngestion.data.recentMessages,
+        shouldCallAI:
+          !duplicateInbound &&
+          !effectiveSuppressAI &&
+          conversation.ai_enabled &&
+          conversation.status === "active",
+        humanTakeover: conversation.status === "human",
+        leadStage: conversation.lead_stage,
+        status: conversation.status,
+        latestCustomerMessage: message,
+        duplicateInbound,
+      },
+      error: null,
+    };
+  }
 
   if (source === "whatsapp" && endpointId && whatsappMessageId && event.aiRateLimit) {
     const fastPathStartedAt = performance.now();
@@ -303,6 +415,7 @@ export async function handleIncomingMessage(
     customerPhone,
     endpointId,
     branchId,
+    { source, smsEndpointId },
   );
   const lookupMs = elapsedMs(lookupStartedAt);
   if (lookupResult.error) {
@@ -320,6 +433,7 @@ export async function handleIncomingMessage(
       gym_id: gymId,
       branch_id: branchId ?? null,
       whatsapp_endpoint_id: endpointId ?? null,
+      sms_endpoint_id: smsEndpointId ?? null,
       customer_phone: customerPhone,
       customer_name: customerName ?? null,
       source,
@@ -342,6 +456,9 @@ export async function handleIncomingMessage(
   }
   if (endpointId && !conversation.whatsapp_endpoint_id) {
     updates.whatsapp_endpoint_id = endpointId;
+  }
+  if (smsEndpointId && !conversation.sms_endpoint_id) {
+    updates.sms_endpoint_id = smsEndpointId;
   }
 
   const routeStampStartedAt = performance.now();

@@ -10,7 +10,7 @@ export type BookingStatus = "upcoming" | "completed" | "cancelled" | "no_show";
 /** UI-only booking filter. Overdue bookings remain `upcoming` in storage. */
 export type BookingStatusFilter = BookingStatus | "all" | "overdue";
 
-export type BookingSource = "manual" | "whatsapp";
+export type BookingSource = "manual" | "whatsapp" | "sms";
 
 export type BookingDuration = 30 | 45 | 60 | 90;
 
