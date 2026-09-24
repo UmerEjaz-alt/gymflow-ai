@@ -55,3 +55,33 @@ export function getCanonicalTwilioSmsWebhookUrl(): string | null {
     return null;
   }
 }
+
+/**
+ * Returns the operator-configured public status-callback base URL. Query
+ * parameters are prohibited because Kroway appends one signed deliveryId.
+ */
+export function getCanonicalTwilioSmsStatusCallbackUrl(): string | null {
+  const configured = process.env.TWILIO_SMS_STATUS_CALLBACK_URL?.trim();
+  if (!configured) return null;
+  try {
+    const url = new URL(configured);
+    if (url.username || url.password || url.hash || url.search) return null;
+    if (process.env.NODE_ENV === "production" && url.protocol !== "https:") return null;
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return configured;
+  } catch {
+    return null;
+  }
+}
+
+export function buildTwilioSmsStatusCallbackUrl(deliveryId: string): string | null {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      deliveryId,
+    )
+  ) {
+    return null;
+  }
+  const base = getCanonicalTwilioSmsStatusCallbackUrl();
+  return base ? `${base}?deliveryId=${encodeURIComponent(deliveryId)}` : null;
+}

@@ -17,6 +17,7 @@
     "verify:sms-identity": "node scripts/verify-sms-identity-foundation.mjs",
     "verify:sms-inbound": "node scripts/verify-sms-inbound.mjs",
     "verify:sms-reliability": "node scripts/verify-sms-inbound-reliability.mjs",
+    "verify:sms-outbound": "node scripts/verify-sms-outbound.mjs",
     "verify:sales-intelligence": "node scripts/verify-sales-intelligence.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

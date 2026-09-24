@@ -287,6 +287,84 @@ export async function saveAIReply(
     };
   }
 
+  // SMS is text-only in Phase 3. Collapse all supported text parts into one
+  // canonical message/outbox item and make omitted media auditable. This avoids
+  // claiming an image/document was delivered while preserving useful text.
+  if (smsInboundReplyToMessageId) {
+    const sequenceText = sequence
+      .filter(
+        (item): item is Extract<(typeof sequence)[number], { type: "text" }> =>
+          item.type === "text",
+      )
+      .map((item) => item.text.trim())
+      .filter(Boolean);
+    const textParts =
+      sequenceText.length > 0
+        ? sequenceText
+        : response.text.trim()
+          ? [response.text.trim()]
+          : [];
+    if (textParts.length === 0) {
+      return { saved: false, error: "SMS AI reply produced no text content." };
+    }
+    const unsupportedMediaCount = sequence.filter(
+      (item) => item.type !== "text",
+    ).length;
+    const messageInsertStartedAt = performance.now();
+    const result = await createMessage({
+      conversation_id: conversationId,
+      sender_type: "ai",
+      message_type: "text",
+      sms_inbound_reply_to_message_id: smsInboundReplyToMessageId,
+      content: textParts.join("\n\n"),
+      metadata: {
+        model,
+        understanding: response.understanding,
+        fallback_used: response.usedFallback,
+        sms_text_part_count: textParts.length,
+        sms_unsupported_media_count: unsupportedMediaCount,
+        ...(resolvedTurn
+          ? {
+              turn_context: {
+                effective_branch_id: resolvedTurn.effectiveBranchId,
+                is_temporary_branch: resolvedTurn.isTemporaryBranch,
+                intent: resolvedTurn.intent,
+                entity: resolvedTurn.entity,
+              },
+            }
+          : {}),
+      },
+    });
+    if (result.error || !result.data) {
+      return {
+        saved: false,
+        error: `Failed to save SMS AI reply: ${result.error ?? "No message returned."}`,
+      };
+    }
+    const messageInsertMs = elapsedMs(messageInsertStartedAt);
+    logPerformance("ai.reply_persistence", {
+      conversation_load_ms: conversationLoadMs,
+      memory_merge_ms: memoryMergeMs,
+      conversation_update_ms: conversationUpdateMs,
+      message_insert_ms: messageInsertMs,
+      slowest_message_insert_ms: messageInsertMs,
+      message_insert_count: 1,
+      queues_whatsapp_delivery: false,
+      queues_sms_delivery: true,
+      sms_unsupported_media_count: unsupportedMediaCount,
+      atomic_rpc_ms: 0,
+      optimistic_retry_count: concurrencyRetryCount,
+      round_trip_count: 3,
+      total_ms: priorAttemptMs + elapsedMs(totalStartedAt),
+    });
+    return {
+      saved: true,
+      error: null,
+      messageId: result.data.id,
+      messages: [result.data],
+    };
+  }
+
   // Persist one deterministic channel-neutral sequence. Unknown assets are ignored.
   const savedMessages: Message[] = [];
   let pendingMediaAttached = false;

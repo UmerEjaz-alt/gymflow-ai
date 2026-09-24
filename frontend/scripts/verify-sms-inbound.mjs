@@ -22,26 +22,25 @@ const [
   bookingList,
   bookingDetail,
   processing,
-] =
-  await Promise.all([
-    readSource("src/app/api/webhooks/sms/route.ts"),
-    readSource("src/services/conversation-manager.server.ts"),
-    readSource("src/services/conversation-turn.server.ts"),
-    readSource("src/services/ai-booking-executor.server.ts"),
-    readSource("src/services/prompt-builder.server.ts"),
-    readSource("src/services/sms-endpoint.server.ts"),
-    readFile(
-      new URL(
-        "../../supabase/migrations/20250101000031_add_inbound_sms_processing.sql",
-        import.meta.url,
-      ),
-      "utf8",
+] = await Promise.all([
+  readSource("src/app/api/webhooks/sms/route.ts"),
+  readSource("src/services/conversation-manager.server.ts"),
+  readSource("src/services/conversation-turn.server.ts"),
+  readSource("src/services/ai-booking-executor.server.ts"),
+  readSource("src/services/prompt-builder.server.ts"),
+  readSource("src/services/sms-endpoint.server.ts"),
+  readFile(
+    new URL(
+      "../../supabase/migrations/20250101000031_add_inbound_sms_processing.sql",
+      import.meta.url,
     ),
-    readSource("src/services/whatsapp-outbox.server.ts"),
-    readSource("src/features/bookings/components/today-view.tsx"),
-    readSource("src/features/bookings/components/booking-detail-sheet.tsx"),
-    readSource("src/services/sms-inbound-processing.server.ts"),
-  ]);
+    "utf8",
+  ),
+  readSource("src/services/whatsapp-outbox.server.ts"),
+  readSource("src/features/bookings/components/today-view.tsx"),
+  readSource("src/features/bookings/components/booking-detail-sheet.tsx"),
+  readSource("src/services/sms-inbound-processing.server.ts"),
+]);
 
 // Twilio's published form-signature example: exact URL + sorted fields,
 // HMAC-SHA1, Base64. Missing/invalid signatures fail closed.
@@ -133,15 +132,23 @@ assert.deepEqual(
 assert.match(route, /MAX_WEBHOOK_BODY_BYTES = 64 \* 1024/);
 assert.match(route, /x-twilio-signature/i);
 assert.match(route, /validateTwilioFormWebhook/);
-assert.ok(route.indexOf("validateTwilioFormWebhook") < route.indexOf("resolveSmsEndpoint"));
+assert.ok(
+  route.indexOf("validateTwilioFormWebhook") < route.indexOf("resolveSmsEndpoint"),
+);
 assert.match(route, /Unknown SMS destination/);
 assert.match(route, /SMS destination is inactive/);
 assert.match(route, /SMS provider mismatch/);
 assert.match(endpointService, /\.rpc\("resolve_sms_endpoint"/);
-assert.doesNotMatch(endpointService, /whatsapp_endpoints|branches\.whatsapp|gyms\.whatsapp/);
+assert.doesNotMatch(
+  endpointService,
+  /whatsapp_endpoints|branches\.whatsapp|gyms\.whatsapp/,
+);
 
 // Dedicated/shared branch routing and endpoint ownership stay database-owned.
-assert.match(migration, /select e\.id, e\.gym_id, e\.branch_id, e\.provider, e\.is_active/);
+assert.match(
+  migration,
+  /select e\.id, e\.gym_id, e\.branch_id, e\.provider, e\.is_active/,
+);
 assert.match(
   migration,
   /where e\.id = p_sms_endpoint_id[\s\S]*and e\.gym_id = p_gym_id[\s\S]*and e\.provider = p_provider[\s\S]*and e\.is_active = true/,
@@ -169,11 +176,17 @@ assert.match(manager, /smsProvider[\s\S]*smsMessageId/);
 assert.match(route, /"sms-ai-customer"/);
 assert.match(route, /"sms-ai-gym"/);
 assert.doesNotMatch(route, /"whatsapp-ai-customer"|"whatsapp-ai-gym"/);
-assert.match(migration, /Only the transaction that inserted the inbound message consumes budget/);
+assert.match(
+  migration,
+  /Only the transaction that inserted the inbound message consumes budget/,
+);
 
 // SMS uses the shared turn and persists replies without selecting WhatsApp
 // delivery; the established WhatsApp predicate remains explicit and intact.
-assert.match(route, /processSmsInboundWork\(ingestion\.data!\.latestCustomerMessage\.id\)/);
+assert.match(
+  route,
+  /processSmsInboundWork\(ingestion\.data!\.latestCustomerMessage\.id\)/,
+);
 assert.match(processing, /processIncomingConversationTurn\(/);
 assert.match(route, /source: "sms"/);
 assert.doesNotMatch(route, /deliverWhatsAppMessage|sendWhatsApp|sms-outbox|sms_outbox/);
@@ -181,7 +194,10 @@ assert.match(
   turn,
   /const queueWhatsAppDelivery =\s*\(event\.source \?\? "whatsapp"\) === "whatsapp" && Boolean\(event\.whatsappMessageId\)/,
 );
-assert.match(turn, /saveAIReply\([\s\S]*queueWhatsAppDelivery,[\s\S]*queueWhatsAppDelivery/);
+assert.match(
+  turn,
+  /saveAIReply\([\s\S]*queueWhatsAppDelivery,[\s\S]*queueWhatsAppDelivery/,
+);
 assert.match(outbox, /deliverWhatsAppMessage/);
 
 // Human/closed/disabled semantics remain the shared conversation semantics.
@@ -202,5 +218,7 @@ assert.match(bookingDetail, /booking\.source === "sms"/);
 console.log("Twilio signature validation and text-only normalization checks passed.");
 console.log("SMS endpoint, branch, provider, and body-limit contracts passed.");
 console.log("Sequential/concurrent SMS idempotency and rate-limit contracts passed.");
-console.log("Shared AI pipeline, persisted-only reply, and booking attribution checks passed.");
+console.log(
+  "Shared AI pipeline, durable reply handoff, and booking attribution checks passed.",
+);
 console.log("Established WhatsApp delivery selection remains explicit.");

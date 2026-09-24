@@ -106,14 +106,20 @@ assert.match(
   migration,
   /Rate limits are consumed once[\s\S]*canonical inbound message[\s\S]*consume_rate_limit/,
 );
-assert.doesNotMatch(processing, /consumeDurableRateLimit|rateLimitBucket|consume_rate_limit/);
+assert.doesNotMatch(
+  processing,
+  /consumeDurableRateLimit|rateLimitBucket|consume_rate_limit/,
+);
 
 // 12-14. Recovery is attached to the existing authenticated maintenance path,
 // bounded, and the duplicate webhook attempts the same message's due job.
 assert.match(maintenanceRoute, /recoverSmsInboundProcessing\(5\)/);
 assert.match(scheduler, /recoverSmsInboundProcessing\(5\)/);
 assert.match(processing, /Math\.max\(1, Math\.min\(25, Math\.floor\(limit\)\)\)/);
-assert.match(route, /processSmsInboundWork\(ingestion\.data!\.latestCustomerMessage\.id\)/);
+assert.match(
+  route,
+  /processSmsInboundWork\(ingestion\.data!\.latestCustomerMessage\.id\)/,
+);
 assert.match(route, /return twiml\(\);/);
 
 // 15-18. Non-AI states become terminal/auditable and mutable controls are
@@ -126,10 +132,7 @@ for (const reason of [
 ]) {
   assert.match(migration + processing, new RegExp(reason));
 }
-assert.match(
-  migration,
-  /case when v_should_process then 'pending' else 'skipped' end/,
-);
+assert.match(migration, /case when v_should_process then 'pending' else 'skipped' end/);
 assert.match(processing, /claim\.conversation\.status !== "active"/);
 assert.match(processing, /!claim\.conversation\.ai_enabled/);
 
@@ -158,11 +161,16 @@ assert.match(
 );
 assert.match(migration, /response_message_id = r\.id[\s\S]*status = 'completed'/);
 
-// 21-22. Phase 2.5 still has no SMS delivery and cannot opt SMS replies into
-// the WhatsApp outbox. Frozen WhatsApp components retain their established APIs.
+// 21-22. Durable inbound completion remains independent of outbound delivery,
+// and SMS replies cannot opt into the WhatsApp outbox. Frozen WhatsApp
+// components retain their established APIs.
 assert.doesNotMatch(
-  route + processing,
+  route,
   /sendWhatsApp|deliverWhatsApp|sendSms|sendSMS|twilio\.messages|sms_outbox|sms-outbox/,
+);
+assert.ok(
+  processing.indexOf("await finishClaim") <
+    processing.indexOf("await deliverSmsMessage"),
 );
 assert.match(
   turn,
@@ -174,7 +182,12 @@ assert.doesNotMatch(migration, /whatsapp_outbound_deliveries/);
 assert.doesNotMatch(phaseTwoMigration, /sms_inbound_processing/);
 
 console.log("Atomic SMS message/work creation and terminal skip checks passed.");
-console.log("Claim token, lease, expiry recovery, backoff, and dead-state checks passed.");
+console.log(
+  "Claim token, lease, expiry recovery, backoff, and dead-state checks passed.",
+);
 console.log("Stable booking identity and unique logical AI reply checks passed.");
-console.log("Bounded maintenance recovery and duplicate webhook recovery checks passed.");
-console.log("No SMS delivery or WhatsApp outbox coupling was introduced.");
+console.log(
+  "Bounded maintenance recovery and duplicate webhook recovery checks passed.",
+);
+console.log("Inbound completion remains durable and independent of delivery retries.");
+console.log("No WhatsApp outbox coupling was introduced for SMS.");

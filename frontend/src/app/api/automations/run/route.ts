@@ -7,6 +7,7 @@ import {
 } from "@/services/automation-runner.server";
 import { recoverWhatsAppDeliveries } from "@/services/whatsapp-outbox.server";
 import { recoverSmsInboundProcessing } from "@/services/sms-inbound-processing.server";
+import { recoverSmsOutboundDeliveries } from "@/services/sms-outbound.server";
 
 function isAuthorized(request: NextRequest): boolean {
   const authorization = request.headers.get("authorization");
@@ -48,24 +49,46 @@ async function handleRun(request: NextRequest) {
 
   const gymId = await resolveGymId(request);
   try {
-    const { result, recovered, recoveredSms } = await runWithSystemSupabase(async () => {
-      const recovered = await recoverWhatsAppDeliveries(50);
-      const result = gymId
-        ? await runGymAutomations(gymId)
-        : await runAllGymAutomations();
-      let recoveredSms = { completed: 0, failed: 0, dead: 0, skipped: 0, deferred: 0 };
-      try {
-        recoveredSms = await recoverSmsInboundProcessing(5);
-      } catch (error) {
-        console.error(
-          "[automation-runner] SMS inbound recovery failed:",
-          error instanceof Error ? error.message : error,
-        );
-      }
-      return { result, recovered, recoveredSms };
-    });
+    const { result, recovered, recoveredSms, recoveredSmsOutbound } =
+      await runWithSystemSupabase(async () => {
+        const recovered = await recoverWhatsAppDeliveries(50);
+        const result = gymId
+          ? await runGymAutomations(gymId)
+          : await runAllGymAutomations();
+        let recoveredSms = {
+          completed: 0,
+          failed: 0,
+          dead: 0,
+          skipped: 0,
+          deferred: 0,
+        };
+        try {
+          recoveredSms = await recoverSmsInboundProcessing(5);
+        } catch (error) {
+          console.error(
+            "[automation-runner] SMS inbound recovery failed:",
+            error instanceof Error ? error.message : error,
+          );
+        }
+        let recoveredSmsOutbound = {
+          sent: 0,
+          deferred: 0,
+          retryable_failure: 0,
+          failed: 0,
+          uncertain: 0,
+        };
+        try {
+          recoveredSmsOutbound = await recoverSmsOutboundDeliveries(10);
+        } catch (error) {
+          console.error(
+            "[automation-runner] SMS outbound recovery failed:",
+            error instanceof Error ? error.message : error,
+          );
+        }
+        return { result, recovered, recoveredSms, recoveredSmsOutbound };
+      });
     console.log(
-      `[automation-runner] ${gymId ? `gym=${gymId}` : `gyms=${"gyms" in result ? result.gyms : 1}`} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} recovered=${recovered.sent} sms_completed=${recoveredSms.completed} sms_failed=${recoveredSms.failed} sms_dead=${recoveredSms.dead}`,
+      `[automation-runner] ${gymId ? `gym=${gymId}` : `gyms=${"gyms" in result ? result.gyms : 1}`} sent=${result.sent} skipped=${result.skipped} failed=${result.failed} recovered=${recovered.sent} sms_completed=${recoveredSms.completed} sms_failed=${recoveredSms.failed} sms_dead=${recoveredSms.dead} sms_outbound_sent=${recoveredSmsOutbound.sent} sms_outbound_failed=${recoveredSmsOutbound.failed} sms_outbound_uncertain=${recoveredSmsOutbound.uncertain}`,
     );
     return NextResponse.json(result);
   } catch (error) {

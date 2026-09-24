@@ -2,6 +2,7 @@ import "server-only";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { processIncomingConversationTurn } from "@/services/conversation-turn.server";
+import { deliverSmsMessage } from "@/services/sms-outbound.server";
 import type { ConversationContext } from "@/services/conversation-manager.server";
 import type { Conversation } from "@/types/conversation";
 import type { Message } from "@/types/message";
@@ -26,15 +27,9 @@ type ClaimedSmsWork = {
 };
 
 export type SmsProcessingOutcome =
-  | "completed"
-  | "failed"
-  | "dead"
-  | "skipped"
-  | "deferred";
+  "completed" | "failed" | "dead" | "skipped" | "deferred";
 
-async function claimSmsInboundWork(
-  messageId?: string,
-): Promise<ClaimedSmsWork | null> {
+async function claimSmsInboundWork(messageId?: string): Promise<ClaimedSmsWork | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("claim_sms_inbound_processing", {
     p_message_id: messageId ?? null,
@@ -67,10 +62,7 @@ async function finishClaim(
   return data === true;
 }
 
-async function skipClaim(
-  claim: ClaimedSmsWork,
-  reason: string,
-): Promise<boolean> {
+async function skipClaim(claim: ClaimedSmsWork, reason: string): Promise<boolean> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("skip_sms_inbound_processing", {
     p_processing_id: claim.processing.id,
@@ -139,9 +131,22 @@ async function processClaimedSmsWork(
     );
 
     if (turn.error) return failClaim(claim, turn.error);
-    return (await finishClaim(claim, turn.aiMessage?.id ?? null))
-      ? "completed"
-      : "deferred";
+    if (!(await finishClaim(claim, turn.aiMessage?.id ?? null))) return "deferred";
+
+    // The persisted reply/outbox is already durable and inbound processing is
+    // complete. An immediate send lowers latency, but any failure remains an
+    // SMS outbox concern and must not reopen/retry the AI turn.
+    if (turn.aiMessage?.id) {
+      try {
+        await deliverSmsMessage(turn.aiMessage.id);
+      } catch (error) {
+        console.error("[SMS processing] immediate outbound attempt failed", {
+          messageId: turn.aiMessage.id,
+          error: error instanceof Error ? error.message : "Unknown delivery error.",
+        });
+      }
+    }
+    return "completed";
   } catch (error) {
     return failClaim(
       claim,

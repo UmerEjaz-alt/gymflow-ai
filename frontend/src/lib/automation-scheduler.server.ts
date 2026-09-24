@@ -48,23 +48,47 @@ async function runAllGyms(): Promise<void> {
       await import("@/services/whatsapp-outbox.server");
     const { recoverSmsInboundProcessing } =
       await import("@/services/sms-inbound-processing.server");
+    const { recoverSmsOutboundDeliveries } =
+      await import("@/services/sms-outbound.server");
 
-    const { totals, recovered, recoveredSms } = await runWithSystemSupabase(async () => {
-      const recovered = await recoverWhatsAppDeliveries(50);
-      const totals = await runAllGymAutomations();
-      let recoveredSms = { completed: 0, failed: 0, dead: 0, skipped: 0, deferred: 0 };
-      try {
-        recoveredSms = await recoverSmsInboundProcessing(5);
-      } catch (error) {
-        console.error(
-          "[automation-scheduler] SMS inbound recovery failed:",
-          error instanceof Error ? error.message : error,
-        );
-      }
-      return { totals, recovered, recoveredSms };
-    });
+    const { totals, recovered, recoveredSms, recoveredSmsOutbound } =
+      await runWithSystemSupabase(async () => {
+        const recovered = await recoverWhatsAppDeliveries(50);
+        const totals = await runAllGymAutomations();
+        let recoveredSms = {
+          completed: 0,
+          failed: 0,
+          dead: 0,
+          skipped: 0,
+          deferred: 0,
+        };
+        try {
+          recoveredSms = await recoverSmsInboundProcessing(5);
+        } catch (error) {
+          console.error(
+            "[automation-scheduler] SMS inbound recovery failed:",
+            error instanceof Error ? error.message : error,
+          );
+        }
+        let recoveredSmsOutbound = {
+          sent: 0,
+          deferred: 0,
+          retryable_failure: 0,
+          failed: 0,
+          uncertain: 0,
+        };
+        try {
+          recoveredSmsOutbound = await recoverSmsOutboundDeliveries(10);
+        } catch (error) {
+          console.error(
+            "[automation-scheduler] SMS outbound recovery failed:",
+            error instanceof Error ? error.message : error,
+          );
+        }
+        return { totals, recovered, recoveredSms, recoveredSmsOutbound };
+      });
     console.log(
-      `[automation-scheduler] Processed automations for ${totals.gyms} gym(s): sent=${totals.sent} skipped=${totals.skipped} failed=${totals.failed} recovered=${recovered.sent} sms_completed=${recoveredSms.completed} sms_failed=${recoveredSms.failed} sms_dead=${recoveredSms.dead}`,
+      `[automation-scheduler] Processed automations for ${totals.gyms} gym(s): sent=${totals.sent} skipped=${totals.skipped} failed=${totals.failed} recovered=${recovered.sent} sms_completed=${recoveredSms.completed} sms_failed=${recoveredSms.failed} sms_dead=${recoveredSms.dead} sms_outbound_sent=${recoveredSmsOutbound.sent} sms_outbound_failed=${recoveredSmsOutbound.failed} sms_outbound_uncertain=${recoveredSmsOutbound.uncertain}`,
     );
 
     lastRunAt = Date.now();
