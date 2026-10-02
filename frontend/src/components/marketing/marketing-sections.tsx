@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -11,13 +11,8 @@ import {
   Pause,
   UserRound,
 } from "lucide-react";
-import {
-  motion,
-  useMotionValueEvent,
-  useReducedMotion,
-  useScroll,
-  useTransform,
-} from "framer-motion";
+import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
+import reviewStyles from "./reviews-section.module.css";
 
 const ease = [0.16, 1, 0.3, 1] as const;
 
@@ -347,221 +342,126 @@ const reviews = [
   },
 ] as const;
 
-function ReviewFrame({
-  index,
-  progress,
-  activeIndex,
-}: {
-  index: number;
-  progress: ReturnType<typeof useScroll>["scrollYProgress"];
-  activeIndex: number;
-}) {
-  const center = index / 2;
-  const opacity = useTransform(progress, (value) => {
-    const distance = Math.abs(value - center);
-    return distance <= 0.1 ? 1 : Math.max(0, 1 - (distance - 0.1) / 0.14);
-  });
-  const y = useTransform(progress, (value) =>
-    Math.max(-54, Math.min(64, (center - value) * 220)),
-  );
-  const scale = useTransform(progress, (value) => {
-    const distance = Math.abs(value - center);
-    return Math.max(0.975, 1 - distance * 0.05);
-  });
-  const review = reviews[index];
-  return (
-    <motion.div
-      aria-hidden={index !== activeIndex}
-      className="pointer-events-none absolute inset-0 flex flex-col justify-center"
-      style={{ opacity, scale, y }}
-    >
-      <blockquote className="grid w-full gap-7 md:grid-cols-[minmax(0,1fr)_15rem] md:items-end md:gap-12 lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-16">
-        <div>
-          <p className="text-[8px] font-semibold tracking-[0.28em] text-[#b76a42] uppercase md:text-[9px]">
-            Perspective 0{index + 1} · {review.theme}
-          </p>
-          <p className="font-display mt-5 max-w-[24ch] text-[clamp(1.85rem,3.3vw,3.65rem)] leading-[1.04] font-bold tracking-[-0.05em] text-[#f3e9de] md:mt-7">
-            “{review.copy}”
-          </p>
-        </div>
-        <footer className="border-t border-white/15 pt-5 md:border-t-0 md:border-l md:border-white/15 md:pt-0 md:pl-8">
-          <div className="flex items-center gap-4 md:block">
-            <span
-              className="font-display grid size-11 shrink-0 place-items-center border border-[#a95f3c]/65 text-sm font-bold text-[#e3a078] md:size-12"
-              aria-hidden
-            >
-              {review.owner.charAt(0)}
-            </span>
-            <cite className="not-italic md:mt-5 md:block">
-              <span className="block text-[12px] font-semibold tracking-[0.06em] text-[#f0e2d6] uppercase">
-                {review.owner}
-              </span>
-              <span className="mt-1 block text-[8px] tracking-[0.18em] text-[#a08b80] uppercase">
-                {review.role}
-              </span>
-            </cite>
-          </div>
-          <dl className="mt-5 grid grid-cols-2 gap-4 border-t border-white/10 pt-4 md:grid-cols-1 md:gap-4">
-            <div>
-              <dt className="text-[7px] tracking-[0.2em] text-[#6f6059] uppercase">
-                Gym profile
-              </dt>
-              <dd className="mt-1.5 text-[9px] text-[#c8b6aa]">{review.gymType}</dd>
-            </div>
-            <div>
-              <dt className="text-[7px] tracking-[0.2em] text-[#6f6059] uppercase">
-                Kroway handles
-              </dt>
-              <dd className="mt-1.5 text-[9px] text-[#c8b6aa]">{review.theme}</dd>
-            </div>
-          </dl>
-        </footer>
-      </blockquote>
-    </motion.div>
-  );
-}
-
 export function ReviewsSection() {
-  const sectionRef = useRef<HTMLElement>(null);
-  const reducedMotion = Boolean(useReducedMotion());
-  const [activeReview, setActiveReview] = useState(0);
-  const { scrollYProgress } = useScroll({
-    target: sectionRef,
-    offset: ["start start", "end end"],
-  });
-  const progressScale = useTransform(scrollYProgress, [0, 1], [0, 1]);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ x: number; time: number; width: number } | null>(null);
 
-  useMotionValueEvent(scrollYProgress, "change", (latest) => {
-    setActiveReview(Math.min(reviews.length - 1, Math.max(0, Math.round(latest * 2))));
-  });
-
-  function moveToReview(index: number) {
-    const section = sectionRef.current;
-    if (!section) return;
-    const sectionTop = window.scrollY + section.getBoundingClientRect().top;
-    const scrollableDistance = section.offsetHeight - window.innerHeight;
-    window.scrollTo({
-      top: sectionTop + (index / (reviews.length - 1)) * scrollableDistance,
-      behavior: "smooth",
-    });
+  // CSS owns playback. Interaction only seeks its timeline; no frame loop or timers.
+  function seek(time: number) {
+    const animation = trackRef.current?.getAnimations()[0];
+    if (animation) animation.currentTime = ((time % 30000) + 30000) % 30000;
   }
 
-  if (reducedMotion) {
-    return (
-      <section
-        id="reviews"
-        aria-labelledby="reviews-heading-static"
-        className="scroll-mt-24 bg-[#17110f] px-5 py-24 text-[#f3e9de] md:px-12 md:py-32"
-      >
-        <div className="mx-auto max-w-[90rem]">
-          <SectionKicker>Gym owner perspectives</SectionKicker>
-          <h2
-            id="reviews-heading-static"
-            className="font-display mt-4 text-2xl font-bold tracking-[-0.04em]"
-          >
-            What changes when Kroway handles the conversation.
-          </h2>
-          <p className="mt-3 text-[9px] tracking-[0.08em] text-[#8f7b70]">
-            Representative perspectives based on common gym workflows.
-          </p>
-          <div className="mt-14 space-y-16">
-            {reviews.map((review, index) => (
-              <blockquote key={review.owner} className="border-t border-white/15 pt-6">
-                <p className="text-[8px] tracking-[0.25em] text-[#bd7048] uppercase">
-                  Perspective 0{index + 1} · {review.theme}
-                </p>
-                <p className="font-display mt-5 max-w-[24ch] text-3xl leading-[1.05] font-bold tracking-[-0.05em]">
-                  “{review.copy}”
-                </p>
-                <footer className="mt-6 text-[9px] tracking-[0.16em] text-[#a28d82] uppercase">
-                  <cite className="text-[#f0e2d6] not-italic">{review.owner}</cite> —{" "}
-                  {review.role} · {review.gymType}
-                </footer>
-              </blockquote>
-            ))}
-          </div>
-        </div>
-      </section>
-    );
-  }
   return (
     <section
       id="reviews"
-      ref={sectionRef}
       aria-labelledby="reviews-heading"
-      className="relative h-[280svh] scroll-mt-24 bg-[#17110f] text-[#f3e9de]"
+      className="scroll-mt-24 overflow-hidden bg-[#17110f] px-5 py-20 text-[#f3e9de] md:px-12 md:py-24 lg:px-16"
     >
-      <div className="sticky top-0 h-[100svh] overflow-hidden px-5 md:px-12 lg:px-16">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_62%_75%_at_14%_45%,rgba(129,50,27,.2),transparent_70%)]" />
-        <div className="absolute inset-y-0 right-[12%] w-px bg-white/[0.08]" />
-        <div className="absolute top-16 right-5 left-5 md:top-20 md:right-12 md:left-12 lg:right-16 lg:left-16">
-          <div className="mx-auto flex max-w-[90rem] items-start justify-between gap-8">
-            <div>
-              <SectionKicker>Gym owner perspectives</SectionKicker>
-              <h2
-                id="reviews-heading"
-                className="font-display mt-4 max-w-[26ch] text-lg font-bold tracking-[-0.035em] text-[#ddcfc4] md:text-2xl"
-              >
-                What changes when Kroway handles the conversation.
-              </h2>
-              <p className="mt-2 text-[8px] tracking-[0.08em] text-[#806e65] md:text-[9px]">
-                Representative perspectives based on common gym workflows.
-              </p>
-            </div>
-            <p className="font-display hidden text-[clamp(3rem,5vw,5.5rem)] leading-none font-black tracking-[-0.07em] text-white/[0.035] md:block">
-              0{activeReview + 1}
+      <div className="mx-auto max-w-[68rem]">
+        <SectionKicker>Gym owner reviews</SectionKicker>
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <h2
+              id="reviews-heading"
+              className="font-display max-w-[26ch] text-xl leading-tight font-bold tracking-[-0.035em] text-[#ddcfc4] md:text-2xl"
+            >
+              What changes when Kroway handles the conversation.
+            </h2>
+            <p className="mt-3 text-xs leading-relaxed text-[#b29d90]">
+              Representative reviews based on common gym workflows.
             </p>
           </div>
         </div>
-        <div className="absolute inset-x-5 top-[11.5rem] bottom-24 md:inset-x-12 md:top-[13.5rem] md:bottom-24 lg:inset-x-16">
-          <div className="relative mx-auto h-full max-w-[90rem]">
-            {reviews.map((review, index) => (
-              <ReviewFrame
-                key={review.owner}
-                index={index}
-                progress={scrollYProgress}
-                activeIndex={activeReview}
-              />
-            ))}
-          </div>
-        </div>
-        <div className="absolute right-5 bottom-7 left-5 md:right-12 md:bottom-9 md:left-12 lg:right-16 lg:left-16">
-          <div className="mx-auto flex max-w-[90rem] items-end justify-between gap-8 border-t border-white/10 pt-5">
-            <div
-              className="flex items-center gap-2"
-              aria-label="Choose an owner perspective"
-            >
-              {reviews.map((review, index) => (
-                <button
-                  key={review.owner}
-                  type="button"
-                  aria-current={activeReview === index ? "true" : undefined}
-                  aria-label={`Show perspective ${index + 1} from ${review.owner}`}
-                  onClick={() => moveToReview(index)}
-                  className={`group flex h-9 items-center gap-2 px-1 text-[8px] tracking-[0.18em] uppercase transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#d58a59] ${
-                    activeReview === index
-                      ? "text-[#f0dfd1]"
-                      : "text-[#77665d] hover:text-[#bd9e8b]"
-                  }`}
+        <p id="reviews-help" className="sr-only">
+          Drag or swipe to browse reviews. Use the left and right arrow keys when the
+          review area is focused. Motion pauses while focused.
+        </p>
+        <div className={reviewStyles.carousel}>
+          <div
+            id="reviews-carousel"
+            className={reviewStyles.viewport}
+            tabIndex={0}
+            role="region"
+            aria-label="Gym owner reviews"
+            aria-describedby="reviews-help"
+            onKeyDown={(event) => {
+              const animation = trackRef.current?.getAnimations()[0];
+              if (!animation || !["ArrowLeft", "ArrowRight"].includes(event.key))
+                return;
+              event.preventDefault();
+              seek(
+                Number(animation.currentTime) +
+                  (event.key === "ArrowRight" ? 10000 : -10000),
+              );
+            }}
+            onPointerDown={(event) => {
+              const track = trackRef.current;
+              const animation = track?.getAnimations()[0];
+              if (!track || !animation || !event.isPrimary || event.button !== 0)
+                return;
+              dragRef.current = {
+                x: event.clientX,
+                time: Number(animation.currentTime),
+                width: track.getBoundingClientRect().width / 2,
+              };
+              event.currentTarget.setPointerCapture(event.pointerId);
+              track.dataset.dragging = "true";
+            }}
+            onPointerMove={(event) => {
+              const drag = dragRef.current;
+              if (drag)
+                seek(drag.time + ((drag.x - event.clientX) / drag.width) * 30000);
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onLostPointerCapture={() => {
+              dragRef.current = null;
+              if (trackRef.current) delete trackRef.current.dataset.dragging;
+            }}
+          >
+            <div ref={trackRef} className={reviewStyles.track}>
+              {[false, true].map((duplicate) => (
+                <div
+                  key={duplicate ? "duplicate" : "original"}
+                  className={reviewStyles.group}
+                  aria-hidden={duplicate ? true : undefined}
                 >
-                  <span
-                    className={`h-px transition-[width,background-color] duration-500 ${activeReview === index ? "w-8 bg-[#cb784c]" : "w-4 bg-white/20 group-hover:w-6"}`}
-                    aria-hidden
-                  />
-                  0{index + 1}
-                  <span className="hidden md:inline">{review.owner}</span>
-                </button>
+                  {reviews.map((review, index) => (
+                    <blockquote key={review.owner} className={reviewStyles.card}>
+                      <p className="text-[9px] font-semibold tracking-[0.2em] text-[#d58a59] uppercase">
+                        Review 0{index + 1}
+                      </p>
+                      <p className="font-display mt-2 text-base font-semibold tracking-[-0.035em] text-[#ddcfc4]">
+                        {review.theme}
+                      </p>
+                      <p className={reviewStyles.quote}>“{review.copy}”</p>
+                      <footer className={reviewStyles.attribution}>
+                        <span
+                          aria-hidden="true"
+                          className="font-display grid size-9 shrink-0 place-items-center border border-[#a95f3c]/50 text-xs font-bold text-[#e3a078]"
+                        >
+                          {review.owner.charAt(0)}
+                        </span>
+                        <cite className="min-w-0 not-italic">
+                          <span className="block text-xs font-semibold text-[#f0e2d6]">
+                            {review.owner}
+                          </span>
+                          <span className="mt-1 block text-[11px] leading-relaxed text-[#b29d90]">
+                            {review.role} · {review.gymType}
+                          </span>
+                        </cite>
+                      </footer>
+                    </blockquote>
+                  ))}
+                </div>
               ))}
             </div>
-            <span className="hidden text-[8px] tracking-[0.18em] text-[#6f6058] uppercase sm:block">
-              Scroll to read
-            </span>
           </div>
         </div>
-        <motion.div
-          className="absolute bottom-0 left-0 h-px w-full origin-left bg-[#bd6840]"
-          style={{ scaleX: progressScale }}
-        />
       </div>
     </section>
   );
