@@ -8,6 +8,10 @@ import { normalizePhoneNumber } from "@/lib/phone-number";
 import type { Branch } from "@/types/branch";
 import { getMembershipPackages } from "@/services/membership-package.server";
 import type { Membership } from "@/types/membership";
+import type { Member, RegisterMemberInput } from "@/types/member";
+import { selectMemberships } from "@/lib/membership-lifecycle";
+import { getActiveScopeConversationHistory } from "@/services/conversation-history.server";
+import type { Message } from "@/types/message";
 
 type Result<T> = { data: T; error: null } | { data: null; error: string };
 
@@ -22,6 +26,7 @@ function normalize(row: MembershipRow): Membership {
   return {
     ...row,
     branch_id: row.branch_id ?? null,
+    member: Array.isArray(row.member) ? row.member[0] : row.member,
     conversation: Array.isArray(row.conversation)
       ? row.conversation[0]
       : row.conversation,
@@ -39,7 +44,7 @@ export async function getMemberships(
   let query = supabase
     .from("memberships")
     .select(
-      "*, conversation:conversations(*), membership_package:membership_packages(*)",
+      "*, member:members(*), conversation:conversations(*), membership_package:membership_packages(*)",
     )
     .eq("gym_id", gymId)
     .order("start_date", { ascending: false });
@@ -53,15 +58,130 @@ export async function getMemberships(
   return { data: ((data ?? []) as MembershipRow[]).map(normalize), error: null };
 }
 
-/** One current/latest membership record per conversation, preserving renewal history. */
-export function getLatestMemberships(memberships: Membership[]): Membership[] {
-  const latest = new Map<string, Membership>();
-  for (const membership of memberships) {
-    const existing = latest.get(membership.conversation_id);
-    if (!existing || membership.start_date > existing.start_date)
-      latest.set(membership.conversation_id, membership);
-  }
-  return [...latest.values()];
+/** One current period per canonical member/branch; callers provide branch-local today. */
+export function getLatestMemberships(
+  memberships: Membership[],
+  today = dateForTimeZone("UTC"),
+): Membership[] {
+  return selectMemberships(memberships, today);
+}
+
+export type Registration = {
+  member: Member;
+  membership: Membership;
+  replayed: boolean;
+};
+
+/** All creation entry points converge here and on one database transaction. */
+export async function registerMember(
+  input: RegisterMemberInput,
+  branch: Branch,
+  source: "manual" | "import" | "lead_conversion" = "manual",
+  conversationId?: string,
+): Promise<Result<Registration>> {
+  if (
+    !input ||
+    typeof input.name !== "string" ||
+    typeof input.phone !== "string" ||
+    typeof input.requestId !== "string" ||
+    typeof input.startDate !== "string" ||
+    (input.expiryDate !== undefined && typeof input.expiryDate !== "string") ||
+    (input.email !== undefined && typeof input.email !== "string")
+  )
+    return { data: null, error: "Invalid member registration details." };
+  if (input.branchId !== branch.id)
+    return { data: null, error: "The selected branch changed. Reopen the form." };
+  const phone = normalizePhoneNumber(input.phone, branch.country_code);
+  if (!phone.e164) return { data: null, error: phone.error! };
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      input.requestId,
+    )
+  )
+    return { data: null, error: "A valid registration request ID is required." };
+  const start = parseImportDate(input.startDate);
+  const end = parseImportDate(input.expiryDate ?? "");
+  if (!start.value || start.error || end.error)
+    return { data: null, error: start.error ?? end.error ?? "Start date is required." };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("register_member_membership", {
+    p_request_id: input.requestId,
+    p_branch_id: branch.id,
+    p_name: input.name,
+    p_phone_e164: phone.e164,
+    p_email: input.email?.trim() || null,
+    p_package_id: input.packageId,
+    p_start_date: start.value,
+    p_expiry_date: end.value,
+    p_source: source,
+    p_existing_member_id: input.existingMemberId ?? null,
+    p_conversation_id: conversationId ?? null,
+  });
+  return error
+    ? { data: null, error: error.message }
+    : { data: data as Registration, error: null };
+}
+
+export async function findMemberByPhone(
+  phone: string,
+  branch: Branch,
+): Promise<Result<Member | null>> {
+  if (typeof phone !== "string") return { data: null, error: "Phone is required." };
+  const normalized = normalizePhoneNumber(phone, branch.country_code);
+  if (!normalized.e164) return { data: null, error: normalized.error! };
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("members")
+    .select("*")
+    .eq("gym_id", branch.gym_id)
+    .eq("phone_e164", normalized.e164)
+    .maybeSingle();
+  return error
+    ? { data: null, error: error.message }
+    : { data: data as Member | null, error: null };
+}
+
+/** Gym-owned full period history; the active branch still controls the list. */
+export async function getMemberHistory(
+  memberId: string,
+  gymId: string,
+): Promise<Result<Membership[]>> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("memberships")
+    .select(
+      "*, member:members(*), conversation:conversations(*), membership_package:membership_packages(*), branch:branches(branch_name)",
+    )
+    .eq("gym_id", gymId)
+    .eq("member_id", memberId)
+    .order("start_date", { ascending: false });
+  return error
+    ? { data: null, error: error.message }
+    : { data: ((data ?? []) as MembershipRow[]).map(normalize), error: null };
+}
+
+/** Conversation linkage is canonical on conversations, not period provenance. */
+export async function getMemberConversationHistory(
+  memberId: string,
+  branch: Branch,
+): Promise<Result<Message[]>> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("gym_id", branch.gym_id)
+    .eq("branch_id", branch.id)
+    .eq("member_id", memberId)
+    .order("last_message_at", { ascending: false })
+    .order("id")
+    .limit(1)
+    .maybeSingle();
+  if (error) return { data: null, error: error.message };
+  if (!data) return { data: [], error: null };
+  const result = await getActiveScopeConversationHistory(data.id);
+  return result.error
+    ? { data: null, error: result.error }
+    : { data: result.data ?? [], error: null };
 }
 
 export async function convertConversationToMember(input: {
@@ -70,51 +190,57 @@ export async function convertConversationToMember(input: {
   customerName: string;
   customerPhone: string;
   startDate: string;
+  requestId: string;
 }): Promise<Result<Membership>> {
   const supabase = await createServerSupabaseClient();
-  const { data: conversation, error: conversationError } = await supabase
+  const { data: conversation, error } = await supabase
     .from("conversations")
-    .select("branch_id, source")
+    .select("branch_id, source, customer_phone")
     .eq("id", input.conversationId)
     .maybeSingle();
-  if (conversationError || !conversation?.branch_id) {
-    return {
-      data: null,
-      error: conversationError?.message ?? "Conversation branch not found.",
-    };
-  }
-  const { data: branch, error: branchError } = await supabase
+  if (error || !conversation?.branch_id)
+    return { data: null, error: error?.message ?? "Conversation branch not found." };
+  const { data: branch } = await supabase
     .from("branches")
-    .select("country_code")
+    .select("*")
     .eq("id", conversation.branch_id)
     .maybeSingle();
-  if (branchError || !branch) {
-    return {
-      data: null,
-      error: branchError?.message ?? "Conversation branch not found.",
-    };
-  }
-  // Meta wa_id values are already international identifiers without a leading +.
-  // Other local-looking manual values still require the branch country context.
-  const phoneInput =
+  if (!branch) return { data: null, error: "Conversation branch not found." };
+  // The browser cannot replace the transport identity. Normalize for comparison only.
+  const authoritative =
+    conversation.source === "whatsapp" && /^\d+$/.test(conversation.customer_phone)
+      ? `+${conversation.customer_phone}`
+      : conversation.customer_phone;
+  const phone = normalizePhoneNumber(authoritative, branch.country_code);
+  const provided = normalizePhoneNumber(
     conversation.source === "whatsapp" && /^\d+$/.test(input.customerPhone.trim())
       ? `+${input.customerPhone.trim()}`
-      : input.customerPhone;
-  const normalizedPhone = normalizePhoneNumber(phoneInput, branch.country_code);
-  if (!normalizedPhone.e164) return { data: null, error: normalizedPhone.error! };
-  const { data, error } = await supabase.rpc("convert_conversation_to_member", {
-    p_conversation_id: input.conversationId,
-    p_membership_package_id: input.membershipPackageId,
-    p_customer_name: input.customerName,
-    p_customer_phone: normalizedPhone.e164,
-    p_start_date: input.startDate,
-  });
-  if (error) return { data: null, error: error.message };
-  return { data: data as Membership, error: null };
+      : input.customerPhone,
+    branch.country_code,
+  );
+  if (!phone.e164 || provided.e164 !== phone.e164)
+    return { data: null, error: "Phone must match this conversation." };
+  const result = await registerMember(
+    {
+      requestId: input.requestId,
+      branchId: branch.id,
+      name: input.customerName,
+      phone: phone.e164,
+      packageId: input.membershipPackageId,
+      startDate: input.startDate,
+    },
+    branch as Branch,
+    "lead_conversion",
+    input.conversationId,
+  );
+  return result.error
+    ? { data: null, error: result.error }
+    : { data: result.data!.membership, error: null };
 }
 
 export type MemberImportInput = {
   rowNumber: number;
+  requestId: string;
   name: string;
   phone: string;
   packageName: string;
@@ -132,6 +258,7 @@ export type MemberImportResult = {
 
 type ValidImportRow = {
   rowNumber: number;
+  requestId: string;
   name: string;
   phone: string;
   packageId: string;
@@ -141,13 +268,14 @@ type ValidImportRow = {
 
 /**
  * Revalidates and imports a bounded batch into one already-authorized branch.
- * The RPC keeps each member's conversation + membership mutation atomic.
+ * The canonical RPC atomically registers member identity and the period.
  */
 export async function importMembersToBranch(
   gymId: string,
   branch: Branch,
   rows: MemberImportInput[],
 ): Promise<Result<MemberImportResult>> {
+  if (!Array.isArray(rows)) return { data: null, error: "Invalid import rows." };
   if (rows.length === 0) {
     return {
       data: { imported_count: 0, duplicate_count: 0, failed_count: 0, row_errors: [] },
@@ -157,34 +285,30 @@ export async function importMembersToBranch(
   if (rows.length > 500)
     return { data: null, error: "Imports are limited to 500 rows at a time." };
 
-  const [packagesResult, membershipsResult] = await Promise.all([
-    getMembershipPackages(gymId, branch.id),
-    getMemberships(gymId, branch.id),
-  ]);
+  const packagesResult = await getMembershipPackages(gymId, branch.id);
   if (packagesResult.error) return { data: null, error: packagesResult.error };
-  if (membershipsResult.error) return { data: null, error: membershipsResult.error };
-
   const packageMatches = new Map<string, string[]>();
   for (const pkg of packagesResult.data!.filter((item) => item.active)) {
     const key = normalizeImportName(pkg.package_name);
     packageMatches.set(key, [...(packageMatches.get(key) ?? []), pkg.id]);
   }
 
-  const existingPhones = new Set<string>();
-  for (const membership of getLatestMemberships(membershipsResult.data!)) {
-    const phone = membership.conversation?.customer_phone;
-    if (!phone) continue;
-    const normalized = normalizePhoneNumber(phone, branch.country_code);
-    if (normalized.e164) existingPhones.add(normalized.e164);
-  }
-
   const errors: MemberImportRowError[] = [];
   const validRows: ValidImportRow[] = [];
-  const seenPhones = new Set<string>();
-  let preflightDuplicates = 0;
   const defaultStartDate = branch.timezone ? dateForTimeZone(branch.timezone) : null;
 
   for (const raw of rows) {
+    if (
+      !raw ||
+      typeof raw.name !== "string" ||
+      typeof raw.phone !== "string" ||
+      typeof raw.packageName !== "string" ||
+      (raw.startDate !== undefined && typeof raw.startDate !== "string") ||
+      (raw.expiryDate !== undefined && typeof raw.expiryDate !== "string")
+    ) {
+      errors.push({ rowNumber: raw?.rowNumber ?? 0, error: "Invalid import row." });
+      continue;
+    }
     const rowNumber =
       Number.isInteger(raw.rowNumber) && raw.rowNumber > 0 ? raw.rowNumber : 0;
     const name = raw.name.trim().replace(/\s+/g, " ");
@@ -195,20 +319,6 @@ export async function importMembersToBranch(
     const normalizedPhone = normalizePhoneNumber(raw.phone, branch.country_code);
     if (!normalizedPhone.e164) {
       errors.push({ rowNumber, error: normalizedPhone.error! });
-      continue;
-    }
-    if (seenPhones.has(normalizedPhone.e164)) {
-      preflightDuplicates += 1;
-      errors.push({ rowNumber, error: "Duplicate phone number in this file." });
-      continue;
-    }
-    seenPhones.add(normalizedPhone.e164);
-    if (existingPhones.has(normalizedPhone.e164)) {
-      preflightDuplicates += 1;
-      errors.push({
-        rowNumber,
-        error: "A member with this phone number already exists in this branch.",
-      });
       continue;
     }
     const packageIds = packageMatches.get(normalizeImportName(raw.packageName)) ?? [];
@@ -241,6 +351,7 @@ export async function importMembersToBranch(
     }
     validRows.push({
       rowNumber,
+      requestId: raw.requestId,
       name,
       phone: normalizedPhone.e164,
       packageId: packageIds[0],
@@ -249,35 +360,39 @@ export async function importMembersToBranch(
     });
   }
 
-  const supabase = await createServerSupabaseClient();
   let imported = 0;
   let duplicates = 0;
   for (let start = 0; start < validRows.length; start += 10) {
     const chunk = validRows.slice(start, start + 10);
     const outcomes = await Promise.all(
       chunk.map(async (row) => {
-        const { error } = await supabase.rpc("import_member_to_branch", {
-          p_branch_id: branch.id,
-          p_customer_name: row.name,
-          p_customer_phone: row.phone,
-          p_membership_package_id: row.packageId,
-          p_start_date: row.startDate,
-          p_expiry_date: row.expiryDate,
-        });
+        const { error } = await registerMember(
+          {
+            requestId: row.requestId,
+            branchId: branch.id,
+            name: row.name,
+            phone: row.phone,
+            packageId: row.packageId,
+            startDate: row.startDate,
+            expiryDate: row.expiryDate ?? undefined,
+          },
+          branch,
+          "import",
+        );
         return { row, error };
       }),
     );
     for (const { row, error } of outcomes) {
       if (!error) {
         imported += 1;
-      } else if (/already exists/i.test(error.message)) {
+      } else if (/overlaps/i.test(error)) {
         duplicates += 1;
         errors.push({
           rowNumber: row.rowNumber,
-          error: "A member with this phone number already exists in this branch.",
+          error: "Membership period overlaps an existing period in this branch.",
         });
       } else {
-        errors.push({ rowNumber: row.rowNumber, error: error.message });
+        errors.push({ rowNumber: row.rowNumber, error });
       }
     }
   }
@@ -285,8 +400,8 @@ export async function importMembersToBranch(
   return {
     data: {
       imported_count: imported,
-      duplicate_count: preflightDuplicates + duplicates,
-      failed_count: errors.length - preflightDuplicates - duplicates,
+      duplicate_count: duplicates,
+      failed_count: errors.length - duplicates,
       row_errors: errors,
     },
     error: null,

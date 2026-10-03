@@ -30,7 +30,7 @@ export function AppShell({
 
   return (
     <ToastProvider>
-      <div className="bg-muted/30 flex h-dvh min-h-0 overflow-hidden">
+      <div className="app-shell bg-muted/30 flex h-dvh min-h-0 overflow-hidden">
         {mobileSidebarOpen ? (
           <button
             aria-label="Close navigation"

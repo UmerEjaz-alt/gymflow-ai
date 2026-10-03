@@ -18,6 +18,7 @@ export function isLeadStage(stage: LeadStage) {
 
 /** Full conversation row returned from Supabase. */
 export type Conversation = {
+  member_id?: string | null;
   id: string;
   gym_id: string;
   /** Nullable: null until the customer establishes their preferred branch. */

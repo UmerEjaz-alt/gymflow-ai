@@ -3,7 +3,7 @@ import { Bot, User, Percent } from "lucide-react";
 
 export function AIPerformance({ metrics }: { metrics: DashboardMetrics }) {
   return (
-    <div className="bg-card border-border flex h-full flex-col rounded-xl border p-6">
+    <div className="bg-card border-border app-panel flex h-full flex-col rounded-xl border">
       <h2 className="mb-4 text-lg font-semibold tracking-tight">AI Performance</h2>
 
       <div className="mb-6 space-y-4">

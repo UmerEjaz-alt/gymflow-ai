@@ -27,8 +27,8 @@ export default async function FacilitiesPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8 flex items-center gap-3">
+    <div className="app-page mx-auto w-full max-w-3xl">
+      <div className="app-page-header flex items-center gap-3">
         <div className="bg-muted grid size-9 shrink-0 place-items-center rounded-lg">
           <Dumbbell aria-hidden className="size-4" />
         </div>
@@ -46,7 +46,7 @@ export default async function FacilitiesPage() {
         </div>
       ) : null}
 
-      <div className="border-border bg-card space-y-6 rounded-xl border p-6 sm:p-8">
+      <div className="border-border bg-card app-panel space-y-6 rounded-xl border">
         <FacilitiesManager
           key={branch.id}
           gymId={gym.id}

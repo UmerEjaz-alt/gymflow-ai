@@ -41,7 +41,7 @@ export function BranchSelector({ branches, currentBranchId }: BranchSelectorProp
         aria-label="Active branch"
         value={activeBranchId ?? ""}
         onChange={(e) => setActiveBranchId(e.target.value)}
-        className="border-input bg-background text-foreground focus-visible:ring-ring max-w-[160px] truncate rounded-md border px-2 py-1 text-xs font-medium shadow-sm focus-visible:ring-1 focus-visible:outline-none"
+        className="border-input bg-background text-foreground focus-visible:ring-ring h-[var(--app-control-size,2rem)] max-w-[160px] truncate rounded-md border px-2 py-1 text-xs font-medium shadow-sm focus-visible:ring-1 focus-visible:outline-none"
       >
         {branches.map((b) => (
           <option key={b.id} value={b.id}>

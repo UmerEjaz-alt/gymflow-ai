@@ -15,6 +15,7 @@ import { getActiveScopeConversationHistory } from "@/services/conversation-histo
 export const dynamic = "force-dynamic";
 
 async function convertLead(input: {
+  requestId: string;
   conversationId: string;
   name: string;
   phone: string;
@@ -23,6 +24,7 @@ async function convertLead(input: {
 }) {
   "use server";
   const result = await convertConversationToMember({
+    requestId: input.requestId,
     conversationId: input.conversationId,
     customerName: input.name,
     customerPhone: input.phone,
@@ -60,7 +62,9 @@ export default async function LeadsPage() {
     );
     const conversationsMs = elapsedMs(conversationsStartedAt);
     if (conversations.error) return <Error message={conversations.error} />;
-    const leads = conversations.data!.filter((item) => isLeadStage(item.lead_stage));
+    const leads = conversations.data!.filter(
+      (item) => isLeadStage(item.lead_stage) && !item.member_id,
+    );
     logPerformance("dashboard.leads.load", {
       scope: "unassigned",
       branch_resolution_ms: branchMs,
@@ -72,7 +76,7 @@ export default async function LeadsPage() {
       total_ms: elapsedMs(totalStartedAt),
     });
     return (
-      <div className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-5 sm:py-6 xl:px-6">
+      <div className="app-page mx-auto w-full max-w-screen-2xl">
         <div className="mb-5 flex items-center gap-3">
           <div className="bg-muted grid size-9 place-items-center rounded-lg">
             <UsersRound className="size-4" />
@@ -107,7 +111,9 @@ export default async function LeadsPage() {
   ]);
   const dataMs = elapsedMs(dataStartedAt);
   if (conversations.error) return <Error message={conversations.error} />;
-  const leads = conversations.data!.filter((item) => isLeadStage(item.lead_stage));
+  const leads = conversations.data!.filter(
+    (item) => isLeadStage(item.lead_stage) && !item.member_id,
+  );
   logPerformance("dashboard.leads.load", {
     scope: "branch",
     branch_resolution_ms: branchMs,
@@ -119,7 +125,7 @@ export default async function LeadsPage() {
     total_ms: elapsedMs(totalStartedAt),
   });
   return (
-    <div className="mx-auto w-full max-w-screen-2xl px-3 py-4 sm:px-5 sm:py-6 xl:px-6">
+    <div className="app-page mx-auto w-full max-w-screen-2xl">
       <div className="mb-5 flex items-center gap-3">
         <div className="bg-muted grid size-9 place-items-center rounded-lg">
           <UsersRound className="size-4" />

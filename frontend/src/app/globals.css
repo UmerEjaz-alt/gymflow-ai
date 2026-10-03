@@ -76,3 +76,70 @@
 .font-display {
   font-family: var(--font-archivo), "Archivo", sans-serif;
 }
+
+/* Authenticated density tokens; marketing typography and root/rem stay unchanged. */
+@layer components {
+  .app-shell {
+    --text-xs: 0.6875rem;
+    --text-xs--line-height: 1rem;
+    --text-sm: 0.75rem;
+    --text-sm--line-height: 1.125rem;
+    --text-base: 0.875rem;
+    --text-base--line-height: 1.25rem;
+    --text-lg: 1rem;
+    --text-lg--line-height: 1.375rem;
+    --text-xl: 1.125rem;
+    --text-xl--line-height: 1.5rem;
+    --text-2xl: 1.25rem;
+    --text-2xl--line-height: 1.625rem;
+    --text-3xl: 1.5rem;
+    --text-3xl--line-height: 1.875rem;
+    --app-page-gutter: 0.75rem;
+    --app-page-block-padding: 0.75rem;
+    --app-panel-padding: 0.875rem;
+    --app-section-gap: 1rem;
+    --app-control-size: 2rem;
+    --app-control-padding-x: 0.75rem;
+    --app-control-padding-y: 0.375rem;
+    --app-input-padding-x: 0.625rem;
+    --app-topbar-height: 3rem;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+  }
+  .app-shell .app-page {
+    padding: var(--app-page-block-padding) var(--app-page-gutter);
+  }
+  .app-shell .app-page-header {
+    margin-bottom: var(--app-section-gap);
+  }
+  .app-shell .app-panel {
+    padding: var(--app-panel-padding);
+  }
+  @media (min-width: 40rem) {
+    .app-shell {
+      --app-page-gutter: 1rem;
+      --app-page-block-padding: 1rem;
+      --app-panel-padding: 1rem;
+    }
+  }
+  @media (min-width: 64rem) {
+    .app-shell {
+      --app-topbar-height: 2.75rem;
+    }
+  }
+  @media (max-width: 47.999rem), (pointer: coarse) {
+    .app-shell {
+      --app-control-size: 2.75rem;
+    }
+    .app-shell button,
+    .app-shell nav a {
+      min-height: 2.75rem;
+      min-width: 2.75rem;
+    }
+    .app-shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    .app-shell select {
+      min-height: 2.75rem;
+    }
+  }
+}

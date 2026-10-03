@@ -2,7 +2,7 @@
 
 import { FileSpreadsheet, LoaderCircle, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -68,16 +68,14 @@ async function parseSpreadsheet(
     throw new Error("Imports are limited to 500 rows at a time.");
 
   const width = Math.max(...matrix.map((row) => row.length));
-  const headers = Array.from({ length: width }, (_, index) =>
-    cellText(matrix[0]?.[index]) || `Column ${index + 1}`,
+  const headers = Array.from(
+    { length: width },
+    (_, index) => cellText(matrix[0]?.[index]) || `Column ${index + 1}`,
   );
   const rows: SourceRow[] = [];
   for (let row = 1; row < matrix.length; row += 1) {
     const values = Object.fromEntries(
-      headers.map((header, index) => [
-        header,
-        cellText(matrix[row]?.[index]),
-      ]),
+      headers.map((header, index) => [header, cellText(matrix[row]?.[index])]),
     );
     if (Object.values(values).some(Boolean)) rows.push({ number: row + 1, values });
   }
@@ -167,8 +165,8 @@ export function MemberImportDialog({ packages, countryCode, onImport }: Props) {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<MemberImportResult | null>(null);
 
+  const rowRequests = useRef(new Map<number, string>());
   const preview = useMemo(() => {
-    const seen = new Set<string>();
     const packageNames = new Map<string, number>();
     packages
       .filter((pkg) => pkg.active)
@@ -187,8 +185,6 @@ export function MemberImportDialog({ packages, countryCode, onImport }: Props) {
       const errors: string[] = [];
       if (!value("name").trim()) errors.push("Name is required.");
       if (!phone.e164) errors.push(phone.error!);
-      else if (seen.has(phone.e164)) errors.push("Duplicate phone in file.");
-      else seen.add(phone.e164);
       const packageName = value("packageName");
       if (!packageName.trim()) errors.push("Package is required.");
       else if (packageNames.get(normalizeImportName(packageName)) !== 1)
@@ -225,6 +221,9 @@ export function MemberImportDialog({ packages, countryCode, onImport }: Props) {
         throw new Error("Imports are limited to 500 rows at a time.");
       setHeaders(parsed.headers);
       setRows(parsed.rows);
+      rowRequests.current = new Map(
+        parsed.rows.map((row) => [row.number, crypto.randomUUID()]),
+      );
       setMapping(detectMapping(parsed.headers));
     } catch (error) {
       toast(
@@ -246,6 +245,7 @@ export function MemberImportDialog({ packages, countryCode, onImport }: Props) {
       const response = await onImport(
         preview.map((item) => ({
           rowNumber: item.row.number,
+          requestId: rowRequests.current.get(item.row.number)!,
           name: item.name,
           phone: item.originalPhone,
           packageName: item.packageName,
@@ -262,6 +262,11 @@ export function MemberImportDialog({ packages, countryCode, onImport }: Props) {
       toast(
         `${response.data.imported_count} member${response.data.imported_count === 1 ? "" : "s"} imported.`,
         "success",
+      );
+    } catch {
+      toast(
+        "Connection interrupted. Retry this batch; completed rows will not be duplicated.",
+        "error",
       );
     } finally {
       setImporting(false);

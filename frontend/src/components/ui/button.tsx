@@ -13,8 +13,9 @@ const buttonVariants = cva(
         ghost: "hover:bg-accent hover:text-accent-foreground",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        icon: "size-9",
+        default:
+          "h-[var(--app-control-size,2.25rem)] px-[var(--app-control-padding-x,1rem)] py-[var(--app-control-padding-y,0.5rem)]",
+        icon: "size-[var(--app-control-size,2.25rem)]",
       },
     },
     defaultVariants: {

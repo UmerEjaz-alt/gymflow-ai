@@ -72,7 +72,7 @@ export async function getDashboardMetrics(
 
   let membershipQuery = supabase
     .from("memberships")
-    .select("conversation_id")
+    .select("member_id, conversation_id, source, member:members(source)")
     .eq("gym_id", gymId);
   if (branchId) membershipQuery = membershipQuery.eq("branch_id", branchId);
   const { data: memberships, error: membershipError } = await membershipQuery;
@@ -94,7 +94,15 @@ export async function getDashboardMetrics(
   let newLeads = 0;
   let qualifiedLeads = 0;
   let trialBooked = 0;
-  let members = 0;
+  let members = new Set((memberships ?? []).map((m) => m.member_id)).size;
+  if (!branchId) {
+    const { count, error } = await supabase
+      .from("members")
+      .select("id", { count: "exact", head: true })
+      .eq("gym_id", gymId);
+    if (error) return { data: null, error: error.message };
+    members = count ?? 0;
+  }
   let lostLeads = 0;
 
   const stageCounts: Record<string, number> = {};
@@ -103,7 +111,6 @@ export async function getDashboardMetrics(
     if (conv.lead_stage === "new_lead") newLeads++;
     else if (conv.lead_stage === "qualified") qualifiedLeads++;
     else if (conv.lead_stage === "trial_booked") trialBooked++;
-    else if (conv.lead_stage === "member") members++;
     else if (conv.lead_stage === "lost") lostLeads++;
 
     // Conversation Stage Analytics resolution:
@@ -183,8 +190,17 @@ export async function getDashboardMetrics(
   );
   const convertedConversationIds = new Set(
     (memberships ?? [])
-      .map((membership) => membership.conversation_id)
-      .filter((conversationId) => aiLeadConversationIds.has(conversationId)),
+      .filter(
+        (membership) =>
+          membership.source === "lead_conversion" &&
+          (Array.isArray(membership.member)
+            ? membership.member[0]?.source
+            : (membership.member as { source: string } | null)?.source) ===
+            "lead_conversion" &&
+          membership.conversation_id &&
+          aiLeadConversationIds.has(membership.conversation_id),
+      )
+      .map((membership) => membership.member_id),
   );
   const peopleAiTalkedTo = aiConversationIds.size;
   const leadsFound = aiLeadConversationIds.size;

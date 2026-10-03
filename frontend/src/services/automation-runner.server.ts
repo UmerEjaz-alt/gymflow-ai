@@ -14,6 +14,7 @@
  */
 import {
   completeAutomationExecution,
+  claimMembershipAutomation,
   countSentAutomationExecutions,
   createAutomationExecution,
   getLatestSentAutomationExecution,
@@ -23,12 +24,13 @@ import { generateValidatedReply } from "@/services/ai-pipeline.server";
 import { buildAutomationConversationContext } from "@/services/conversation-manager.server";
 import { saveAIReply } from "@/services/conversation-reply.server";
 import { deliverWhatsAppMessage } from "@/services/whatsapp-outbox.server";
-import { getAllGymIds, getBranchIds } from "@/services/branch.server";
+import { getAllGymIds, getBranchIds, getBranch } from "@/services/branch.server";
 import { listConversations } from "@/services/conversation.server";
 import { listMessages } from "@/services/message.server";
 import { getLatestMemberships, getMemberships } from "@/services/membership.server";
 import type { AutomationConfig } from "@/types/automation";
 import type { Membership } from "@/types/membership";
+import { dateForTimeZone } from "@/lib/member-import";
 import { controlVersion } from "@/lib/conversation-control";
 
 const dateKey = (date: Date) => date.toISOString().slice(0, 10);
@@ -74,7 +76,7 @@ function inQuietHours(config: AutomationConfig, now: Date): boolean {
 
 async function runTurn(
   config: AutomationConfig,
-  conversationId: string,
+  conversationId: string | null,
   triggerKeyBase: string,
   instruction: string,
   membership?: Membership,
@@ -109,15 +111,19 @@ async function runTurn(
   const triggerKey = `${triggerKeyBase}-${followUpIndex}`;
 
   // ── Claim execution slot ─────────────────────────────────────────────────
-  const claim = await createAutomationExecution({
-    gym_id: config.gym_id,
-    branch_id: config.branch_id,
-    automation_config_id: config.id,
-    conversation_id: conversationId,
-    membership_id: membership?.id ?? null,
-    trigger_key: triggerKey,
-  });
-  if (claim.error || !claim.data) return "skipped";
+  const claim = membership
+    ? await claimMembershipAutomation(config.id, membership.id, triggerKey)
+    : conversationId
+      ? await createAutomationExecution({
+          gym_id: config.gym_id,
+          branch_id: config.branch_id,
+          automation_config_id: config.id,
+          conversation_id: conversationId,
+          trigger_key: triggerKey,
+        })
+      : { data: null, error: "Conversation unavailable." };
+  if (claim.error || !claim.data || !claim.data.conversation_id) return "skipped";
+  conversationId = claim.data.conversation_id;
   const claimToken = claim.data.claim_token;
   if (!claimToken) return "failed";
   const expectedControlVersion = claim.data.control_version ?? 0;
@@ -179,7 +185,15 @@ async function runTurn(
 
     const saved = await saveAIReply(
       contextResult.data.conversation.id,
-      pipeline.validatedResponse,
+      membership
+        ? {
+            ...pipeline.validatedResponse,
+            messageSequence: [{ type: "text", text: pipeline.validatedResponse.text }],
+            mediaActions: [],
+            pendingMedia: null,
+            pendingMediaAssetId: null,
+          }
+        : pipeline.validatedResponse,
       pipeline.aiResponse?.model ?? "unknown",
       pipeline.knowledge?.media ?? [],
       pipeline.knowledge?.allBranches?.map((branch) => branch.id) ?? [],
@@ -192,6 +206,8 @@ async function runTurn(
       null,
       expectedControlVersion,
       true,
+      membership ? claim.data.id : null,
+      membership ? claimToken : null,
     );
     if (!saved.saved) {
       await completeAutomationExecution(claim.data.id, claimToken, {
@@ -256,8 +272,13 @@ async function runBranchAutomations(
       `Conversations error (branch ${branchId}): ${conversationsResult.error}`,
     );
 
-  const memberships = getLatestMemberships(membershipsResult.data!);
-  const today = dateKey(now);
+  const branch = await getBranch(branchId);
+  if (branch.error || !branch.data?.timezone)
+    throw new Error("Branch timezone is required for membership automation dates.");
+  const today = dateForTimeZone(branch.data.timezone, now);
+  const membershipDate = (days: number) =>
+    dateKey(addDays(new Date(`${today}T12:00:00Z`), days));
+  const memberships = getLatestMemberships(membershipsResult.data!, today);
   const counts = { sent: 0, skipped: 0, failed: 0 };
   const track = (outcome: "sent" | "skipped" | "failed") => {
     counts[outcome] += 1;
@@ -270,8 +291,9 @@ async function runBranchAutomations(
     if (config.automation_type === "membership_expiry_reminder") {
       for (const m of memberships.filter(
         (m) =>
+          m.start_date <= today &&
           m.expiry_date >= today &&
-          m.expiry_date <= dateKey(addDays(now, config.delay_days)),
+          m.expiry_date <= membershipDate(config.delay_days),
       )) {
         track(
           await runTurn(
@@ -289,7 +311,7 @@ async function runBranchAutomations(
       // ── 2. Expired membership follow-up ────────────────────────────────────
     } else if (config.automation_type === "expired_membership_follow_up") {
       for (const m of memberships.filter(
-        (m) => m.expiry_date <= dateKey(addDays(now, -config.delay_days)),
+        (m) => m.expiry_date <= membershipDate(-config.delay_days),
       )) {
         track(
           await runTurn(
@@ -308,8 +330,7 @@ async function runBranchAutomations(
     } else if (config.automation_type === "member_check_in") {
       for (const m of memberships.filter(
         (m) =>
-          m.start_date <= dateKey(addDays(now, -config.delay_days)) &&
-          m.expiry_date >= today,
+          m.start_date <= membershipDate(-config.delay_days) && m.expiry_date >= today,
       )) {
         track(
           await runTurn(
@@ -328,6 +349,7 @@ async function runBranchAutomations(
     } else {
       for (const conversation of conversationsResult.data!.filter(
         (c) =>
+          !c.member_id &&
           c.lead_stage !== "member" &&
           c.lead_stage !== "lost" &&
           new Date(c.last_message_at) <= addDays(now, -config.delay_days),

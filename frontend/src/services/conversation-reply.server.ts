@@ -62,6 +62,8 @@ export async function saveAIReply(
   smsInboundReplyToMessageId: string | null = null,
   expectedControlVersion = 0,
   automation = false,
+  automationExecutionId: string | null = null,
+  automationClaimToken: string | null = null,
 ): Promise<SaveAIReplyResult> {
   const totalStartedAt = performance.now();
   // Guard: skip unapproved responses without writing anything
@@ -191,6 +193,12 @@ export async function saveAIReply(
     const messageMetadata = {
       control_version: expectedControlVersion,
       automation,
+      ...(automationExecutionId
+        ? {
+            automation_execution_id: automationExecutionId,
+            automation_claim_token: automationClaimToken,
+          }
+        : {}),
       model,
       understanding: response.understanding,
       fallback_used: response.usedFallback,
@@ -256,6 +264,8 @@ export async function saveAIReply(
         smsInboundReplyToMessageId,
         expectedControlVersion,
         automation,
+        automationExecutionId,
+        automationClaimToken,
       );
     }
     if (row.outcome !== "saved" || !row.message_row) {
@@ -413,6 +423,12 @@ export async function saveAIReply(
         ? {
             control_version: expectedControlVersion,
             automation,
+            ...(automationExecutionId
+              ? {
+                  automation_execution_id: automationExecutionId,
+                  automation_claim_token: automationClaimToken,
+                }
+              : {}),
             model,
             understanding: response.understanding,
             fallback_used: response.usedFallback,

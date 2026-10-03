@@ -8,7 +8,7 @@ export function AISalesResults({ metrics }: { metrics: DashboardMetrics }) {
   ];
 
   return (
-    <section className="border-border bg-card rounded-xl border p-6">
+    <section className="border-border bg-card app-panel rounded-xl border">
       <h2 className="text-lg font-semibold tracking-tight">
         AI Sales Results — All Time
       </h2>

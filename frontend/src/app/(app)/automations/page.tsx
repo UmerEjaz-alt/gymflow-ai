@@ -45,8 +45,8 @@ export default async function AutomationsPage() {
     );
   const configs = await getAutomationConfigs(resolved.gym.id, resolved.branch.id);
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8 flex items-center gap-3">
+    <div className="app-page mx-auto w-full max-w-4xl">
+      <div className="app-page-header flex items-center gap-3">
         <div className="bg-muted grid size-9 place-items-center rounded-lg">
           <Bot className="size-4" />
         </div>

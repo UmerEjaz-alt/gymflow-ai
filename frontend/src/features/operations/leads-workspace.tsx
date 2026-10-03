@@ -19,6 +19,7 @@ export function LeadsWorkspace({
   initialLeads: Lead[];
   packages: MembershipPackage[];
   onConvert: (input: {
+    requestId: string;
     conversationId: string;
     name: string;
     phone: string;
@@ -36,6 +37,7 @@ export function LeadsWorkspace({
     [error, setError] = useState(""),
     [historyError, setHistoryError] = useState(""),
     [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
+  const conversionRequestId = useRef("");
   const loadedHistoryIds = useRef(new Set<string>());
   const filtered = useMemo(
     () =>
@@ -51,6 +53,7 @@ export function LeadsWorkspace({
     if (!convert) return;
     const data = new FormData(event.currentTarget);
     const result = await onConvert({
+      requestId: conversionRequestId.current,
       conversationId: convert.id,
       name: String(data.get("name") ?? ""),
       phone: String(data.get("phone") ?? ""),
@@ -102,7 +105,7 @@ export function LeadsWorkspace({
           <div className="divide-y">
             {filtered.map((lead) => (
               <button
-                className="hover:bg-accent flex w-full items-center justify-between gap-4 p-4 text-left"
+                className="hover:bg-accent flex w-full items-center justify-between gap-3 p-3 text-left"
                 key={lead.id}
                 onClick={() => void selectLead(lead)}
               >
@@ -136,7 +139,12 @@ export function LeadsWorkspace({
           <LeadDetail
             lead={selected}
             loading={loadingHistoryId === selected?.id}
-            onConvert={() => selected && setConvert(selected)}
+            onConvert={() => {
+              if (selected) {
+                conversionRequestId.current = crypto.randomUUID();
+                setConvert(selected);
+              }
+            }}
           />
         </div>
       </div>

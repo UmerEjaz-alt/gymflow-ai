@@ -25,7 +25,7 @@ export default async function SettingsPage() {
 
   if (gymResult.error) {
     return (
-      <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="app-page mx-auto w-full max-w-4xl">
         <div className="border-border rounded-lg border bg-red-500/10 px-4 py-3 text-sm text-red-700">
           Could not load gym profile: {gymResult.error}
         </div>
@@ -38,8 +38,8 @@ export default async function SettingsPage() {
   const branch = resolved?.branch ?? null;
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8 flex items-center gap-3">
+    <div className="app-page mx-auto w-full max-w-4xl">
+      <div className="app-page-header flex items-center gap-3">
         <div className="bg-muted grid size-9 shrink-0 place-items-center rounded-lg">
           <Building2 aria-hidden className="size-4" />
         </div>

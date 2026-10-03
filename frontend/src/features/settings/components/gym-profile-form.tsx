@@ -312,12 +312,12 @@ export function GymProfileForm({
   // -------------------------------------------------------------------------
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
       {/* ------------------------------------------------------------------ */}
       {/* 1. Business Profile (gym-level)                                     */}
       {/* ------------------------------------------------------------------ */}
-      <div className="border-border bg-card rounded-xl border p-6 shadow-sm sm:p-8">
-        <form onSubmit={handleSaveBusiness} noValidate className="space-y-6">
+      <div className="border-border bg-card app-panel rounded-xl border shadow-sm">
+        <form onSubmit={handleSaveBusiness} noValidate className="space-y-5">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="flex items-center gap-2">
@@ -360,7 +360,7 @@ export function GymProfileForm({
                   )}
                 </div>
                 <div className="space-y-2">
-                  <Input
+                  <input
                     ref={logoInputRef}
                     id="logoUpload"
                     className="sr-only"
@@ -456,8 +456,8 @@ export function GymProfileForm({
       {/* 2. Active Branch Profile (branch-level)                              */}
       {/* ------------------------------------------------------------------ */}
       {branch && onSaveBranch ? (
-        <div className="border-border bg-card rounded-xl border p-6 shadow-sm sm:p-8">
-          <form onSubmit={handleSaveBranch} noValidate className="space-y-8">
+        <div className="border-border bg-card app-panel rounded-xl border shadow-sm">
+          <form onSubmit={handleSaveBranch} noValidate className="space-y-6">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2">

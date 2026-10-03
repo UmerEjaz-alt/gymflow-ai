@@ -490,7 +490,7 @@ export function ConversationSimulator({
         </p>
       ) : null}
 
-      <section className="border-border bg-card grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-xl border shadow-sm lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)]">
+      <section className="border-border bg-card grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-xl border shadow-sm lg:grid-cols-[224px_minmax(0,1fr)] xl:grid-cols-[240px_minmax(0,1fr)]">
         {/* ── Sidebar: Customer List ── */}
         <aside
           className={cn(
@@ -524,7 +524,7 @@ export function ConversationSimulator({
                   type="button"
                   onClick={() => void selectConversation(conversation)}
                   className={cn(
-                    "hover:bg-accent flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors",
+                    "hover:bg-accent flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors",
                     selectedId === conversation.id && "bg-accent",
                   )}
                 >
@@ -534,7 +534,7 @@ export function ConversationSimulator({
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2">
                       <span className="flex min-w-0 items-center gap-1.5">
-                        <strong className="truncate text-[13px]">
+                        <strong className="truncate text-[12px]">
                           {conversation.customer_name || "Unnamed customer"}
                         </strong>
                         {conversation.id !== selectedId &&
@@ -599,7 +599,7 @@ export function ConversationSimulator({
                 {initials(selected.customer_name, selected.customer_phone)}
               </Avatar>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-semibold">
+                <p className="truncate text-[12px] font-semibold">
                   {selected.customer_name || "Unnamed customer"}
                 </p>
                 <p className="text-muted-foreground truncate text-xs">
@@ -629,9 +629,9 @@ export function ConversationSimulator({
 
             <div
               ref={scrollRef}
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4 lg:py-2"
             >
-              <div className="mx-auto w-full max-w-4xl space-y-2">
+              <div className="mx-auto w-full max-w-4xl space-y-1.5">
                 {loadingHistoryId === selected.id ? (
                   <div
                     className="mx-auto mt-16 w-full max-w-sm space-y-3"
@@ -915,24 +915,24 @@ export function ConversationSimulator({
 function ChatMessage({ item }: { item: Message }) {
   const isCustomer = item.sender_type === "customer";
   return (
-    <div className={cn("flex", isCustomer ? "justify-end" : "justify-start")}>
+    <div className={cn("flex", isCustomer ? "justify-start" : "justify-end")}>
       <div
         className={cn(
-          "max-w-[88%] rounded-xl px-2.5 py-1.5 shadow-sm sm:max-w-[76%] lg:max-w-[min(72%,42rem)]",
+          "max-w-[88%] rounded-lg px-2 py-1 shadow-sm sm:max-w-[76%] lg:max-w-[min(72%,34rem)]",
           isCustomer
-            ? "bg-primary text-primary-foreground rounded-br-md"
-            : "bg-card rounded-bl-md",
+            ? "bg-card rounded-bl-md"
+            : "bg-primary text-primary-foreground rounded-br-md",
           item.sender_type === "human" && "[overflow-wrap:anywhere]",
         )}
       >
         {item.sender_type === "human" ? (
-          <p className="text-muted-foreground mb-1 text-[10px]">You</p>
+          <p className="text-primary-foreground/70 mb-0.5 text-[10px] leading-3">You</p>
         ) : null}
         <MessageContent item={item} />
         <div
           className={cn(
-            "mt-1 flex items-center justify-end gap-1 text-[10px]",
-            isCustomer ? "text-primary-foreground/70" : "text-muted-foreground",
+            "mt-0.5 flex items-center justify-end gap-1 text-[10px] leading-3",
+            isCustomer ? "text-muted-foreground" : "text-primary-foreground/70",
           )}
         >
           <time>{formatTime(item.created_at)}</time>
@@ -967,7 +967,7 @@ function MessageContent({ item }: { item: Message }) {
           className="mb-1.5 max-h-52 rounded-md object-cover"
           src={mediaUrl}
         />
-        <p className="text-sm leading-5 whitespace-pre-wrap lg:text-[13px] lg:leading-[1.125rem]">
+        <p className="text-[13px] leading-[1.125rem] whitespace-pre-wrap lg:text-[12px] lg:leading-4">
           {item.content}
         </p>
       </>
@@ -986,7 +986,7 @@ function MessageContent({ item }: { item: Message }) {
     );
   }
   return (
-    <p className="text-sm leading-5 whitespace-pre-wrap lg:text-[13px] lg:leading-[1.125rem]">
+    <p className="text-[13px] leading-[1.125rem] whitespace-pre-wrap lg:text-[12px] lg:leading-4">
       {item.content}
     </p>
   );

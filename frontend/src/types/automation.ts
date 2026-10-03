@@ -22,7 +22,7 @@ export type AutomationExecution = {
   gym_id: string;
   branch_id: string | null;
   automation_config_id: string;
-  conversation_id: string;
+  conversation_id: string | null;
   membership_id: string | null;
   trigger_key: string;
   status: "pending" | "sent" | "skipped" | "failed";

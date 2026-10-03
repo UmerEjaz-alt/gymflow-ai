@@ -83,8 +83,8 @@ export default async function TrainersPage() {
   const { data: trainers, error: trainersError } = await getTrainers(gym.id, branch.id);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-8 flex items-center gap-3">
+    <div className="app-page mx-auto w-full max-w-3xl">
+      <div className="app-page-header flex items-center gap-3">
         <div className="bg-muted grid size-9 shrink-0 place-items-center rounded-lg">
           <Users aria-hidden className="size-4" />
         </div>
@@ -102,7 +102,7 @@ export default async function TrainersPage() {
         </div>
       ) : null}
 
-      <div className="border-border bg-card space-y-6 rounded-xl border p-6 sm:p-8">
+      <div className="border-border bg-card app-panel space-y-6 rounded-xl border">
         <TrainersManager
           gymId={gym.id}
           branchId={branch.id}

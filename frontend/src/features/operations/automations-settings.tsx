@@ -110,7 +110,7 @@ export function AutomationsSettings({
         return (
           <form
             action={save}
-            className="border-border bg-card rounded-xl border p-5"
+            className="border-border bg-card app-panel rounded-xl border"
             key={definition.type}
           >
             <div className="flex items-start justify-between gap-4">

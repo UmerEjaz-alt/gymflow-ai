@@ -98,7 +98,7 @@ export async function completeAutomationExecution(
 
 export async function countSentAutomationExecutions(
   configId: string,
-  conversationId: string,
+  conversationId: string | null,
   membershipId?: string | null,
   since?: string | null,
 ): Promise<Result<number>> {
@@ -107,12 +107,10 @@ export async function countSentAutomationExecutions(
     .from("automation_executions")
     .select("id", { count: "exact", head: true })
     .eq("automation_config_id", configId)
-    .eq("conversation_id", conversationId)
     .eq("status", "sent");
 
-  if (membershipId) {
-    query = query.eq("membership_id", membershipId);
-  }
+  if (membershipId) query = query.eq("membership_id", membershipId);
+  else if (conversationId) query = query.eq("conversation_id", conversationId);
   if (since) {
     query = query.gt("created_at", since);
   }
@@ -128,7 +126,7 @@ export async function countSentAutomationExecutions(
  */
 export async function getLatestSentAutomationExecution(
   configId: string,
-  conversationId: string,
+  conversationId: string | null,
   membershipId?: string | null,
   since?: string | null,
 ): Promise<Result<AutomationExecution | null>> {
@@ -137,12 +135,12 @@ export async function getLatestSentAutomationExecution(
     .from("automation_executions")
     .select("*")
     .eq("automation_config_id", configId)
-    .eq("conversation_id", conversationId)
     .eq("status", "sent")
     .order("completed_at", { ascending: false })
     .limit(1);
 
   if (membershipId) query = query.eq("membership_id", membershipId);
+  else if (conversationId) query = query.eq("conversation_id", conversationId);
   if (since) query = query.gt("created_at", since);
 
   const { data, error } = await query.maybeSingle();
@@ -156,3 +154,25 @@ export const AUTOMATION_TYPES: AutomationType[] = [
   "member_check_in",
   "lead_follow_up",
 ];
+
+export async function claimMembershipAutomation(
+  configId: string,
+  membershipId: string,
+  triggerKey: string,
+): Promise<Result<AutomationExecution>> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("claim_membership_automation", {
+    p_config_id: configId,
+    p_membership_id: membershipId,
+    p_trigger_key: triggerKey,
+  });
+  const execution = Array.isArray(data) ? data[0] : null;
+  return error
+    ? { data: null, error: error.message }
+    : execution
+      ? { data: execution as AutomationExecution, error: null }
+      : {
+          data: null,
+          error: "Reminder is suppressed, complete, stale or already claimed.",
+        };
+}
