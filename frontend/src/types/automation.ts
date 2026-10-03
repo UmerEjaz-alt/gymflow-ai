@@ -32,4 +32,5 @@ export type AutomationExecution = {
   completed_at: string | null;
   claim_token?: string | null;
   lease_expires_at?: string | null;
+  control_version?: number;
 };

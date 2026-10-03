@@ -13,13 +13,10 @@
  */
 
 import {
-  cancelBooking,
   claimBookingAction,
   checkTrainerAvailability,
   completeBookingAction,
-  createBooking,
   getUpcomingBookingsForConversation,
-  rescheduleBooking,
 } from "@/services/booking.server";
 import { zonedLocalInputToIso } from "@/lib/zoned-datetime";
 import type { AIBookingAction } from "@/types/understanding";
@@ -31,6 +28,8 @@ import type { ConversationMemory } from "@/types/conversation-memory";
 import type { Gym } from "@/types/gym";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 import type { Trainer } from "@/types/trainer";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { controlVersion } from "@/lib/conversation-control";
 
 export type AIBookingExecutionResult = {
   executed: boolean;
@@ -273,7 +272,7 @@ export async function executeAIBookingAction(params: {
       );
       if (claim) return claim;
 
-      const result = await createBooking(payload);
+      const result = await mutateAIBooking(conversation, "create", null, payload);
 
       if (result.error) {
         if (
@@ -368,7 +367,7 @@ export async function executeAIBookingAction(params: {
       );
       if (claim) return claim;
 
-      const result = await rescheduleBooking(target.id, {
+      const result = await mutateAIBooking(conversation, "reschedule", target.id, {
         scheduled_at: scheduledAtUtc,
         duration_minutes: action.duration_minutes || target.duration_minutes || 30,
       });
@@ -437,7 +436,7 @@ export async function executeAIBookingAction(params: {
         "cancel",
       );
       if (claim) return claim;
-      const result = await cancelBooking(target.id);
+      const result = await mutateAIBooking(conversation, "cancel", target.id, {});
 
       if (result.error) {
         return {
@@ -528,4 +527,30 @@ function formatFriendlyDateTime(isoUtc: string, timezone: string): string {
   } catch {
     return isoUtc;
   }
+}
+
+/** The ownership lock and booking mutation are one database transaction. */
+async function mutateAIBooking(
+  conversation: Conversation,
+  action: "create" | "reschedule" | "cancel",
+  bookingId: string | null,
+  payload: object,
+): Promise<{ data: Booking | null; error: string | null }> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("execute_controlled_booking_mutation", {
+    p_conversation_id: conversation.id,
+    p_expected_control_version: controlVersion(conversation),
+    p_action: action,
+    p_booking_id: bookingId,
+    p_payload: payload,
+  });
+  const conflict =
+    error?.code === "23P01" ||
+    error?.message.includes("bookings_no_overlapping_trainer_bookings");
+  return {
+    data: data as Booking | null,
+    error: conflict
+      ? "This trainer already has an overlapping booking at this time."
+      : (error?.message ?? null),
+  };
 }

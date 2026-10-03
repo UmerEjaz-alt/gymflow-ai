@@ -24,6 +24,7 @@ import type { Facility } from "@/types/facility";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 import type { MembershipPackage } from "@/types/membership-package";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { controlVersion } from "@/lib/conversation-control";
 import {
   resolveMediaSelection,
   resolveProactiveTrainerMedia,
@@ -93,6 +94,7 @@ export async function processIncomingConversationTurn(
   }
 
   const context = managerResult.data;
+  const expectedControlVersion = controlVersion(context.conversation);
   if (context.duplicateInbound) {
     return {
       customerMessage: context.latestCustomerMessage,
@@ -120,6 +122,7 @@ export async function processIncomingConversationTurn(
       message_type: "text",
       content: event.safeFallbackReplyText,
       metadata: {
+        control_version: expectedControlVersion,
         system_fallback: "voice_transcription_failed",
         ...(queueWhatsAppDelivery ? { outbound_delivery: "whatsapp_outbox" } : {}),
       },
@@ -279,6 +282,7 @@ export async function processIncomingConversationTurn(
       0,
       0,
       event.source === "sms" ? context.latestCustomerMessage.id : null,
+      expectedControlVersion,
     );
     const persistenceMs = elapsedMs(persistenceStartedAt);
 

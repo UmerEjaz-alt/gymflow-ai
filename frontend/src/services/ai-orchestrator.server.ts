@@ -10,6 +10,8 @@
  */
 
 import type { ConversationContext } from "@/services/conversation-manager.server";
+import { getConversation } from "@/services/conversation.server";
+import { aiControlMatches, controlVersion } from "@/lib/conversation-control";
 import {
   buildKnowledgeContext,
   type KnowledgeContext,
@@ -73,6 +75,18 @@ export async function processConversation(
   // managing the conversation, we must not fire an automated message over them.
   if (context.humanTakeover) {
     return { action: "human_takeover", context, knowledge: null };
+  }
+  if (context.status === "closed") {
+    return { action: "no_reply", context, knowledge: null };
+  }
+  // Automation contexts may have waited before reaching this point. Keep the
+  // captured epoch; refreshing it would authorize stale work after a hand-back.
+  const current = await getConversation(context.conversation.id);
+  if (
+    !current.data ||
+    !aiControlMatches(current.data, controlVersion(context.conversation), isAutomation)
+  ) {
+    return { action: "no_reply", context, knowledge: null };
   }
 
   // ── 2. AI disabled ───────────────────────────────────────────────────────

@@ -30,6 +30,8 @@ export type Conversation = {
   customer_name: string | null;
   source: ConversationSource;
   status: ConversationStatus;
+  /** Monotonic control epoch; optional only for legacy fixtures/rolling reads. */
+  control_version?: number;
   lead_stage: LeadStage;
   /** Permanent timestamp set when the existing AI lead flow first identifies this lead. */
   ai_lead_at?: string | null;

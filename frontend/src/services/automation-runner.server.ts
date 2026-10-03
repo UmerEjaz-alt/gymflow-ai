@@ -29,6 +29,7 @@ import { listMessages } from "@/services/message.server";
 import { getLatestMemberships, getMemberships } from "@/services/membership.server";
 import type { AutomationConfig } from "@/types/automation";
 import type { Membership } from "@/types/membership";
+import { controlVersion } from "@/lib/conversation-control";
 
 const dateKey = (date: Date) => date.toISOString().slice(0, 10);
 const addDays = (date: Date, days: number) =>
@@ -119,6 +120,7 @@ async function runTurn(
   if (claim.error || !claim.data) return "skipped";
   const claimToken = claim.data.claim_token;
   if (!claimToken) return "failed";
+  const expectedControlVersion = claim.data.control_version ?? 0;
 
   // ── Auto-send guard ──────────────────────────────────────────────────────
   if (!config.auto_send) {
@@ -155,6 +157,13 @@ async function runTurn(
     });
     return "failed";
   }
+  if (controlVersion(contextResult.data.conversation) !== expectedControlVersion) {
+    await completeAutomationExecution(claim.data.id, claimToken, {
+      status: "skipped",
+      error_message: "Conversation control changed; automation was stopped.",
+    });
+    return "skipped";
+  }
 
   // ── AI call ──────────────────────────────────────────────────────────────
   await sleep(AI_TURN_DELAY_MS);
@@ -176,6 +185,12 @@ async function runTurn(
       pipeline.knowledge?.allBranches?.map((branch) => branch.id) ?? [],
       null,
       null,
+      true,
+      false,
+      0,
+      0,
+      null,
+      expectedControlVersion,
       true,
     );
     if (!saved.saved) {

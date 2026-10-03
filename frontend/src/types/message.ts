@@ -19,6 +19,9 @@ export type Message = {
   sender_type: SenderType;
   message_type: MessageType;
   whatsapp_message_id: string | null;
+  client_request_id?: string | null;
+  /** User-facing projection of existing WhatsApp delivery state, never trusted input. */
+  owner_delivery_state?: "pending" | "sent" | "failed" | "unconfirmed";
   /** Provider-scoped inbound SMS identity. Null for non-SMS messages/replies. */
   sms_provider?: string | null;
   sms_message_id?: string | null;

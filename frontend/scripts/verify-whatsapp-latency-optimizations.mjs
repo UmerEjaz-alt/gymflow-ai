@@ -178,7 +178,7 @@ assert.match(
 // optimistic concurrency token for one atomic update + durable message insert.
 // Multi-message/media replies retain the existing ordered path.
 assert.ok(reply.indexOf("getConversation(conversationId)") >= 0);
-assert.match(reply, /persist_whatsapp_ai_text_reply/);
+assert.match(reply, /persist_controlled_whatsapp_ai_text_reply/);
 assert.match(reply, /p_expected_updated_at: conversationResult\.data\.updated_at/);
 assert.match(
   reply,

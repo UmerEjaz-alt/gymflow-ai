@@ -24,6 +24,12 @@ import type { Conversation } from "@/types/conversation";
 import type { Message } from "@/types/message";
 import type { WhatsAppEndpoint } from "@/types/whatsapp-endpoint";
 import { replaceConversationMessages } from "@/lib/conversation-message-query";
+import {
+  takeOverConversation,
+  returnConversationToAI,
+  sendOwnerMessage,
+  refreshInboxThread,
+} from "@/app/(app)/inbox/actions";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,6 +106,12 @@ function preview(messages: Message[]) {
         : message.content;
 }
 
+function mergeThreadMessages(existing: Message[], incoming: Message[]) {
+  return [...new Map([...existing, ...incoming].map((m) => [m.id, m])).values()].sort(
+    (a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -126,6 +138,21 @@ export function ConversationSimulator({
   const [error, setError] = useState(initialError ?? "");
   const [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [controlBusy, setControlBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [replyAvailability, setReplyAvailability] = useState<{
+    id: string;
+    allowed: boolean;
+    explanation: string | null;
+  } | null>(null);
+  // Retain unacknowledged requests even when another conversation is selected/sent.
+  const ownerRequests = useRef(new Map<string, string>());
+  const sendingRef = useRef(false);
+  const controlRef = useRef(false);
+  const selectedIdRef = useRef(selectedId);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const loadedConversationIds = useRef(
     new Set(initialConversations[0] ? [initialConversations[0].id] : []),
@@ -135,6 +162,173 @@ export function ConversationSimulator({
     () => conversations.find((conversation) => conversation.id === selectedId) ?? null,
     [conversations, selectedId],
   );
+
+  // One selected real thread, at most once every four seconds; suspend while hidden.
+  // A cancelled request cannot overwrite a newly selected thread or a control action.
+  const refreshGeneration = useRef(0);
+  useEffect(() => {
+    if (selected?.source !== "whatsapp") return;
+    const id = selected.id;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      const generation = refreshGeneration.current;
+      if (
+        document.visibilityState === "visible" &&
+        !sendingRef.current &&
+        !controlRef.current
+      ) {
+        try {
+          const result = await refreshInboxThread(id);
+          if (
+            cancelled ||
+            generation !== refreshGeneration.current ||
+            selectedIdRef.current !== id
+          ) {
+            if (!cancelled) timer = setTimeout(refresh, 4000);
+            return;
+          }
+          if (result.data) {
+            const snapshot = result.data;
+            setConversations((current) =>
+              current
+                .map((c) => {
+                  if (c.id !== id) return c;
+                  return {
+                    ...c,
+                    ...snapshot.conversation,
+                    messages: mergeThreadMessages(c.messages, snapshot.messages),
+                  };
+                })
+                .sort((a, b) => b.last_message_at.localeCompare(a.last_message_at)),
+            );
+            setReplyAvailability({
+              id,
+              allowed: snapshot.ownerSendAllowed,
+              explanation: snapshot.ownerSendExplanation,
+            });
+          } else {
+            setError(result.error ?? "This conversation could not be refreshed.");
+            setReplyAvailability({
+              id,
+              allowed: false,
+              explanation: "Refresh this conversation before replying.",
+            });
+          }
+        } catch {
+          if (
+            !cancelled &&
+            generation === refreshGeneration.current &&
+            selectedIdRef.current === id
+          ) {
+            setReplyAvailability({
+              id,
+              allowed: false,
+              explanation: "Connection interrupted. Reconnecting…",
+            });
+          }
+        }
+      }
+      if (!cancelled) timer = setTimeout(refresh, 4000);
+    };
+    void refresh();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [selected?.id, selected?.source]);
+
+  async function changeControl(takeOver: boolean) {
+    if (!selected || controlRef.current || sendingRef.current) return;
+    const id = selected.id;
+    controlRef.current = true;
+    refreshGeneration.current += 1;
+    setControlBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await (takeOver
+        ? takeOverConversation(id)
+        : returnConversationToAI(id));
+      if (selectedIdRef.current !== id) return;
+      if (result.error || !result.conversation) {
+        setError(result.error ?? "Control could not be changed.");
+        return;
+      }
+      setConversations((current) =>
+        current.map((c) => (c.id === id ? { ...c, ...result.conversation } : c)),
+      );
+      setNotice(result.notice ?? "");
+      setReplyAvailability(null);
+      const snapshot = await refreshInboxThread(id);
+      if (selectedIdRef.current === id && snapshot.data)
+        setReplyAvailability({
+          id,
+          allowed: snapshot.data.ownerSendAllowed,
+          explanation: snapshot.data.ownerSendExplanation,
+        });
+    } catch {
+      if (selectedIdRef.current === id)
+        setError("Connection interrupted. Refresh before changing control again.");
+    } finally {
+      refreshGeneration.current += 1;
+      controlRef.current = false;
+      setControlBusy(false);
+    }
+  }
+
+  async function sendOwnerReply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || !message.trim() || sendingRef.current || controlBusy) return;
+    const id = selected.id,
+      text = message.trim();
+    const requestKey = JSON.stringify([id, text]);
+    const requestId = ownerRequests.current.get(requestKey) ?? crypto.randomUUID();
+    ownerRequests.current.set(requestKey, requestId);
+    sendingRef.current = true;
+    refreshGeneration.current += 1;
+    setIsSending(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await sendOwnerMessage(id, text, requestId);
+      if (result.message) {
+        const sent = result.message;
+        setConversations((current) =>
+          current
+            .map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    last_message_at:
+                      c.last_message_at > sent.created_at
+                        ? c.last_message_at
+                        : sent.created_at,
+                    messages: mergeThreadMessages(c.messages, [sent]),
+                  }
+                : c,
+            )
+            .sort((a, b) => b.last_message_at.localeCompare(a.last_message_at)),
+        );
+        if (selectedIdRef.current === id) setMessage("");
+        ownerRequests.current.delete(requestKey);
+      }
+      if (selectedIdRef.current === id) {
+        setError(result.error ?? "");
+        setNotice(result.notice ?? "");
+      }
+    } catch {
+      // Keep the exact request ID and draft: the server may have committed it.
+      if (selectedIdRef.current === id)
+        setError(
+          "Connection interrupted. Retry this same message to check whether it was sent.",
+        );
+    } finally {
+      sendingRef.current = false;
+      refreshGeneration.current += 1;
+      setIsSending(false);
+    }
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -197,6 +391,7 @@ export function ConversationSimulator({
 
     setConversations((current) => [customer, ...current]);
     loadedConversationIds.current.add(customer.id);
+    selectedIdRef.current = customer.id;
     setSelectedId(customer.id);
     setMobileDetailOpen(true);
     setName("");
@@ -247,6 +442,10 @@ export function ConversationSimulator({
   }
 
   async function selectConversation(conversation: SimulatorConversation) {
+    setMessage("");
+    setNotice("");
+    setReplyAvailability(null);
+    selectedIdRef.current = conversation.id;
     setSelectedId(conversation.id);
     setMobileDetailOpen(true);
     if (loadedConversationIds.current.has(conversation.id)) return;
@@ -255,11 +454,18 @@ export function ConversationSimulator({
     setLoadingHistoryId(conversation.id);
     const result = await onLoadMessages(conversation.id);
     if (result.error || !result.data) {
-      setError(result.error ?? "Could not load this conversation.");
+      if (selectedIdRef.current === conversation.id)
+        setError(result.error ?? "Could not load this conversation.");
     } else {
       loadedConversationIds.current.add(conversation.id);
       setConversations((current) =>
-        replaceConversationMessages(current, conversation.id, result.data!),
+        conversation.source === "whatsapp"
+          ? current.map((c) =>
+              c.id === conversation.id
+                ? { ...c, messages: mergeThreadMessages(result.data!, c.messages) }
+                : c,
+            )
+          : replaceConversationMessages(current, conversation.id, result.data!),
       );
     }
     setLoadingHistoryId((current) => (current === conversation.id ? null : current));
@@ -276,12 +482,15 @@ export function ConversationSimulator({
   return (
     <>
       {error ? (
-        <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+        <p
+          role="alert"
+          className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700"
+        >
           {error}
         </p>
       ) : null}
 
-      <section className="border-border bg-card grid min-h-0 flex-1 overflow-hidden rounded-xl border shadow-sm lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)]">
+      <section className="border-border bg-card grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-xl border shadow-sm lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)]">
         {/* ── Sidebar: Customer List ── */}
         <aside
           className={cn(
@@ -371,7 +580,7 @@ export function ConversationSimulator({
         {selected ? (
           <div
             className={cn(
-              "bg-muted/35 min-h-0 flex-col",
+              "bg-muted/35 min-h-0 min-w-0 flex-col",
               mobileDetailOpen ? "flex" : "hidden lg:flex",
             )}
           >
@@ -470,7 +679,7 @@ export function ConversationSimulator({
                     ))
                   : null}
 
-                {isSending ? (
+                {isSending && selected.source === "simulator" ? (
                   <div className="bg-card flex w-fit items-center gap-2 rounded-2xl rounded-bl-md px-4 py-3 text-sm shadow-sm">
                     <LoaderCircle className="size-4 animate-spin" /> Kroway is typing…
                   </div>
@@ -501,6 +710,85 @@ export function ConversationSimulator({
                   </Button>
                 </div>
               </form>
+            ) : selected.source === "whatsapp" ? (
+              <div className="border-border bg-card shrink-0 border-t px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+                <div className="mx-auto w-full max-w-4xl">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="text-muted-foreground">
+                      {selected.status === "human"
+                        ? "You're handling this conversation"
+                        : selected.status === "closed"
+                          ? "This conversation is closed"
+                          : selected.ai_enabled
+                            ? "Kroway AI is handling this conversation"
+                            : "AI replies are paused for this conversation"}
+                    </span>
+                    {selected.status !== "closed" ? (
+                      <Button
+                        variant="ghost"
+                        className="border-border h-8 shrink-0 border px-3 text-xs"
+                        disabled={controlBusy || isSending}
+                        onClick={() => changeControl(selected.status !== "human")}
+                      >
+                        {controlBusy
+                          ? "Updating…"
+                          : selected.status === "human"
+                            ? "Return to AI"
+                            : "Take Over"}
+                      </Button>
+                    ) : null}
+                  </div>
+                  {selected.status === "human" ? (
+                    <form className="mt-2.5 flex gap-2" onSubmit={sendOwnerReply}>
+                      <Input
+                        className="min-w-0 flex-1"
+                        aria-label="Your WhatsApp reply"
+                        placeholder="Reply to customer…"
+                        value={message}
+                        maxLength={4096}
+                        onChange={(event) => setMessage(event.target.value)}
+                        disabled={
+                          isSending ||
+                          controlBusy ||
+                          replyAvailability?.id !== selected.id ||
+                          !replyAvailability.allowed
+                        }
+                      />
+                      <Button
+                        className="shrink-0"
+                        aria-label="Send WhatsApp reply"
+                        size="icon"
+                        type="submit"
+                        disabled={
+                          isSending ||
+                          controlBusy ||
+                          !message.trim() ||
+                          replyAvailability?.id !== selected.id ||
+                          !replyAvailability.allowed
+                        }
+                      >
+                        {isSending ? (
+                          <LoaderCircle className="size-4 animate-spin" />
+                        ) : (
+                          <SendHorizonal aria-hidden className="size-4" />
+                        )}
+                      </Button>
+                    </form>
+                  ) : null}
+                  {selected.status === "human" &&
+                  replyAvailability?.id === selected.id &&
+                  replyAvailability.explanation ? (
+                    <p className="text-muted-foreground mt-2 text-xs" role="status">
+                      {replyAvailability.explanation}
+                    </p>
+                  ) : null}
+                  {notice ? (
+                    <p className="text-muted-foreground mt-2 text-xs" role="status">
+                      {notice}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
             ) : (
               <p className="border-border bg-card text-muted-foreground shrink-0 border-t px-4 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] text-center text-xs">
                 Real WhatsApp conversations are shown read-only.
@@ -634,8 +922,12 @@ function ChatMessage({ item }: { item: Message }) {
           isCustomer
             ? "bg-primary text-primary-foreground rounded-br-md"
             : "bg-card rounded-bl-md",
+          item.sender_type === "human" && "[overflow-wrap:anywhere]",
         )}
       >
+        {item.sender_type === "human" ? (
+          <p className="text-muted-foreground mb-1 text-[10px]">You</p>
+        ) : null}
         <MessageContent item={item} />
         <div
           className={cn(
@@ -644,6 +936,17 @@ function ChatMessage({ item }: { item: Message }) {
           )}
         >
           <time>{formatTime(item.created_at)}</time>
+          {item.sender_type === "human" ? (
+            <span>
+              {item.owner_delivery_state === "sent"
+                ? "Sent to WhatsApp"
+                : item.owner_delivery_state === "failed"
+                  ? "Not sent"
+                  : item.owner_delivery_state === "pending"
+                    ? "Waiting to send"
+                    : "Send status not confirmed"}
+            </span>
+          ) : null}
           {!isCustomer && item.sender_type === "ai" ? (
             <CheckCheck className="size-3" />
           ) : null}

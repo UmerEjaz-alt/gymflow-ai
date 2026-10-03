@@ -11,13 +11,14 @@
 import type { ValidatedResponse } from "@/services/response-validator.server";
 import { isLeadStage, type UpdateConversationPayload } from "@/types/conversation";
 import { mergeConversationMemory } from "@/services/memory-extractor.server";
-import { getConversation, updateConversation } from "@/services/conversation.server";
+import { getConversation } from "@/services/conversation.server";
 import { createMessage } from "@/services/message.server";
 import type { MediaAsset } from "@/types/media-asset";
 import type { Message } from "@/types/message";
 import type { ResolvedTurnContext } from "@/services/knowledge-layer.server";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { aiControlMatches } from "@/lib/conversation-control";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -59,6 +60,8 @@ export async function saveAIReply(
   concurrencyRetryCount = 0,
   priorAttemptMs = 0,
   smsInboundReplyToMessageId: string | null = null,
+  expectedControlVersion = 0,
+  automation = false,
 ): Promise<SaveAIReplyResult> {
   const totalStartedAt = performance.now();
   // Guard: skip unapproved responses without writing anything
@@ -93,6 +96,12 @@ export async function saveAIReply(
   }
 
   const memoryMergeStartedAt = performance.now();
+  if (!aiControlMatches(conversationResult.data, expectedControlVersion, automation)) {
+    return {
+      saved: false,
+      error: "Conversation control changed; AI work was stopped.",
+    };
+  }
   const memoryMerge = mergeConversationMemory(
     conversationResult.data.customer_memory,
     response.understanding.memory_updates,
@@ -180,6 +189,8 @@ export async function saveAIReply(
   if (atomicTextItem) {
     const attachPendingMedia = response.pendingMedia !== null;
     const messageMetadata = {
+      control_version: expectedControlVersion,
+      automation,
       model,
       understanding: response.understanding,
       fallback_used: response.usedFallback,
@@ -198,26 +209,29 @@ export async function saveAIReply(
     };
     const atomicStartedAt = performance.now();
     const supabase = await createServerSupabaseClient();
-    const { data, error } = await supabase.rpc("persist_whatsapp_ai_text_reply", {
-      p_conversation_id: conversationId,
-      p_expected_updated_at: conversationResult.data.updated_at,
-      p_latest_understanding: conversationUpdatePayload.latest_understanding ?? null,
-      p_update_customer_memory: Object.prototype.hasOwnProperty.call(
-        conversationUpdatePayload,
-        "customer_memory",
-      ),
-      p_customer_memory: conversationUpdatePayload.customer_memory ?? null,
-      p_lead_stage: conversationUpdatePayload.lead_stage ?? null,
-      p_ai_lead_at: conversationUpdatePayload.ai_lead_at ?? null,
-      p_update_branch: Object.prototype.hasOwnProperty.call(
-        conversationUpdatePayload,
-        "branch_id",
-      ),
-      p_branch_id: conversationUpdatePayload.branch_id ?? null,
-      p_last_message_at: conversationUpdatePayload.last_message_at,
-      p_content: atomicTextItem.text,
-      p_metadata: messageMetadata,
-    });
+    const { data, error } = await supabase.rpc(
+      "persist_controlled_whatsapp_ai_text_reply",
+      {
+        p_conversation_id: conversationId,
+        p_expected_updated_at: conversationResult.data.updated_at,
+        p_latest_understanding: conversationUpdatePayload.latest_understanding ?? null,
+        p_update_customer_memory: Object.prototype.hasOwnProperty.call(
+          conversationUpdatePayload,
+          "customer_memory",
+        ),
+        p_customer_memory: conversationUpdatePayload.customer_memory ?? null,
+        p_lead_stage: conversationUpdatePayload.lead_stage ?? null,
+        p_ai_lead_at: conversationUpdatePayload.ai_lead_at ?? null,
+        p_update_branch: Object.prototype.hasOwnProperty.call(
+          conversationUpdatePayload,
+          "branch_id",
+        ),
+        p_branch_id: conversationUpdatePayload.branch_id ?? null,
+        p_last_message_at: conversationUpdatePayload.last_message_at,
+        p_content: atomicTextItem.text,
+        p_metadata: messageMetadata,
+      },
+    );
     const atomicMs = elapsedMs(atomicStartedAt);
     const row = Array.isArray(data) ? data[0] : null;
     if (error || !row) {
@@ -240,6 +254,8 @@ export async function saveAIReply(
         concurrencyRetryCount + 1,
         priorAttemptMs + elapsedMs(totalStartedAt),
         smsInboundReplyToMessageId,
+        expectedControlVersion,
+        automation,
       );
     }
     if (row.outcome !== "saved" || !row.message_row) {
@@ -274,16 +290,22 @@ export async function saveAIReply(
   }
 
   const conversationUpdateStartedAt = performance.now();
-  const preSaveConversationUpdate = await updateConversation(
-    conversationId,
-    conversationUpdatePayload,
+  const updateClient = await createServerSupabaseClient();
+  const preSaveConversationUpdate = await updateClient.rpc(
+    "update_ai_conversation_controlled",
+    {
+      p_conversation_id: conversationId,
+      p_expected_control_version: expectedControlVersion,
+      p_automation: automation,
+      p_patch: conversationUpdatePayload,
+    },
   );
   const conversationUpdateMs = elapsedMs(conversationUpdateStartedAt);
 
   if (preSaveConversationUpdate.error) {
     return {
       saved: false,
-      error: `Failed to update understanding before saving reply: ${preSaveConversationUpdate.error}`,
+      error: `Failed to update understanding before saving reply: ${preSaveConversationUpdate.error.message}`,
     };
   }
 
@@ -318,6 +340,8 @@ export async function saveAIReply(
       sms_inbound_reply_to_message_id: smsInboundReplyToMessageId,
       content: textParts.join("\n\n"),
       metadata: {
+        control_version: expectedControlVersion,
+        automation,
         model,
         understanding: response.understanding,
         fallback_used: response.usedFallback,
@@ -387,6 +411,8 @@ export async function saveAIReply(
       content: isText ? item.text : (item.caption ?? asset!.title),
       metadata: isText
         ? {
+            control_version: expectedControlVersion,
+            automation,
             model,
             understanding: response.understanding,
             fallback_used: response.usedFallback,
@@ -404,6 +430,8 @@ export async function saveAIReply(
               : {}),
           }
         : {
+            control_version: expectedControlVersion,
+            automation,
             media_asset_id: asset!.id,
             media_url: asset!.media_url,
             title: asset!.title,

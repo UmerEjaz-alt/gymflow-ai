@@ -85,6 +85,14 @@ async function runPipeline(
         ) ?? []),
       ],
       pipelineResult.knowledge?.allBranches?.map((branch) => branch.id) ?? [],
+      null,
+      null,
+      false,
+      false,
+      0,
+      0,
+      null,
+      context.conversation.control_version ?? 0,
     );
   }
 

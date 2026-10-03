@@ -43,6 +43,10 @@ export async function prepareWhatsAppDelivery(
       updated_at: new Date().toISOString(),
     })
     .eq("message_id", messageId)
+    .in("status", ["pending", "failed"])
+    .or(
+      "last_error.is.null,last_error.neq.Cancelled before sending: conversation control changed.",
+    )
     .is("phone_number_id", null)
     .is("whatsapp_endpoint_id", null);
   logPerformance("whatsapp.delivery_prepare", {
@@ -205,7 +209,17 @@ async function deliverClaim(
     transitioned: beganSending,
     total_ms: elapsedMs(sendBoundaryStartedAt),
   });
-  if (!beganSending) return "deferred";
+  if (!beganSending) {
+    const supabase = await createServerSupabaseClient();
+    const current = await supabase
+      .from("whatsapp_outbound_deliveries")
+      .select("status,retryable")
+      .eq("id", delivery.id)
+      .maybeSingle();
+    return current.data?.status === "failed" && !current.data.retryable
+      ? "failed"
+      : "deferred";
+  }
   const metaSendStartedAt = performance.now();
   const result = await send();
   logPerformance("whatsapp.meta_send", {

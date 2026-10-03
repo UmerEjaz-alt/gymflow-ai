@@ -100,7 +100,11 @@ assert.match(
   automationRunner,
   /deliverWhatsAppMessage\(claim\.data\.sent_message_id\)/,
 );
-assert.match(automationRunner, /null,\s*null,\s*true,\s*\)/);
+assert.match(
+  automationRunner,
+  /null,\s*null,\s*true,\s*false,\s*0,\s*0,\s*null,\s*expectedControlVersion,\s*true,\s*\)/,
+);
+assert.match(automationRunner, /claim\.data\.control_version \?\? 0/);
 assert.match(automationRunner, /status: delivery === "sent" \? "sent" : "failed"/);
 
 const endpointResolver = await readFile(
