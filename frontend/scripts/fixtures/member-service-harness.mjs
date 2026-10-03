@@ -56,7 +56,8 @@ export async function verifyMemberServices(db, fixture) {
         values = [];
       let one = false,
         order = "",
-        countOnly = false;
+        countOnly = false,
+        embedBranch = false;
       const identifier = (k) => {
         if (k.startsWith("conversations.")) {
           assert(table === "messages" && /^[a-z_]+$/.test(k.slice(14)));
@@ -68,6 +69,13 @@ export async function verifyMemberServices(db, fixture) {
       const query = {
         select(_columns, options) {
           countOnly = Boolean(options?.head);
+          embedBranch = table === "memberships" && /branch:branches/.test(_columns);
+          if (embedBranch)
+            assert.match(
+              _columns,
+              /branch:branches!memberships_branch_gym_fk\(branch_name\)/,
+              "Membership branch embedding must select the compound branch/gym relationship",
+            );
           return query;
         },
         in(k, list) {
@@ -95,13 +103,19 @@ export async function verifyMemberServices(db, fixture) {
         then(resolve, reject) {
           const join =
             table === "memberships"
-              ? " left join members person on person.id=t.member_id left join conversations c on c.id=t.conversation_id left join membership_packages p on p.id=t.membership_package_id"
+              ? " left join members person on person.id=t.member_id left join conversations c on c.id=t.conversation_id left join membership_packages p on p.id=t.membership_package_id" +
+                (embedBranch
+                  ? " left join branches b on b.id=t.branch_id and b.gym_id=t.gym_id"
+                  : "")
               : table === "messages"
                 ? " join conversations c on c.id=t.conversation_id"
                 : "";
           const columns =
             table === "memberships"
-              ? "t.*,to_jsonb(person) member,to_jsonb(c) conversation,to_jsonb(p) membership_package"
+              ? "t.*,to_jsonb(person) member,to_jsonb(c) conversation,to_jsonb(p) membership_package" +
+                (embedBranch
+                  ? ",jsonb_build_object('branch_name',b.branch_name) branch"
+                  : "")
               : "t.*";
           return q(
             `select ${countOnly ? "count(*)::int n" : columns} from ${table} t${join}${filters.length ? " where " + filters.join(" and ") : ""}${order}`,
@@ -171,6 +185,23 @@ export async function verifyMemberServices(db, fixture) {
     const created = await service.registerMember(input, authorizedBranch);
     assert.equal(created.error, null);
     assert.equal(created.data.member.phone_e164, "+923008889999");
+    const manualList = await service.getMemberships(gym, branch);
+    assert.equal(manualList.error, null);
+    assert(
+      manualList.data.some((period) => period.member_id === created.data.member.id),
+    );
+    const manualHistory = await service.getMemberHistory(created.data.member.id, gym);
+    assert.equal(manualHistory.error, null);
+    assert.equal(manualHistory.data.length, 1);
+    assert.equal(
+      manualHistory.data[0].branch.branch_name,
+      (
+        await q("select branch_name from branches where id=$1 and gym_id=$2", [
+          branch,
+          gym,
+        ])
+      ).rows[0].branch_name,
+    );
     assert.equal(
       (await service.registerMember(input, authorizedBranch)).data.membership.id,
       created.data.membership.id,
@@ -226,6 +257,19 @@ export async function verifyMemberServices(db, fixture) {
     assert.equal(imported.data.failed_count, 0);
     const replay = await service.importMembersToBranch(gym, authorizedBranch, rows);
     assert.equal(replay.data.imported_count, 2);
+    const importedHistory = await service.getMemberHistory(created.data.member.id, gym);
+    assert.equal(importedHistory.error, null);
+    assert.equal(importedHistory.data.length, 4);
+    assert(
+      importedHistory.data.every(
+        (period) => period.branch_id === branch && period.branch,
+      ),
+    );
+    assert.equal(
+      (await service.getMemberHistory(created.data.member.id, crypto.randomUUID())).data
+        .length,
+      0,
+    );
     assert.equal(
       (await q("select count(*)::int n from conversations where gym_id=$1", [gym]))
         .rows[0].n,
@@ -255,6 +299,13 @@ export async function verifyMemberServices(db, fixture) {
       requestId: crypto.randomUUID(),
     });
     assert.equal(conversion.error, null);
+    const convertedHistory = await service.getMemberHistory(
+      conversion.data.member_id,
+      gym,
+    );
+    assert.equal(convertedHistory.error, null);
+    assert.equal(convertedHistory.data[0].conversation_id, c);
+    assert.equal(convertedHistory.data[0].branch_id, branch);
     assert.equal(
       (await q("select customer_phone from conversations where id=$1", [c])).rows[0]
         .customer_phone,

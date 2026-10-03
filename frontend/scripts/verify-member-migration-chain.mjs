@@ -131,6 +131,36 @@ assert.equal(
   (await row("select count(*)::int n from members where gym_id=$1", [gym])).n,
   3,
 );
+// Audit real FK catalog after the complete migration chain. These are the
+// relationships PostgREST discovers, not just those in the reduced fixture.
+const relationships = async (source, target) =>
+  (
+    await q(
+      "select conname,pg_get_constraintdef(oid) definition from pg_constraint where contype='f' and conrelid=$1::regclass and confrelid=$2::regclass order by conname",
+      [`public.${source}`, `public.${target}`],
+    )
+  ).rows;
+const branches = await relationships("memberships", "branches");
+assert.deepEqual(
+  branches.map((fk) => fk.conname),
+  ["memberships_branch_gym_fk", "memberships_branch_id_fkey"],
+);
+assert.match(
+  branches[0].definition,
+  /FOREIGN KEY \(branch_id, gym_id\) REFERENCES branches\(id, gym_id\)/,
+);
+for (const [source, target, name] of [
+  ["memberships", "members", "memberships_member_gym_fk"],
+  ["conversations", "members", "conversations_member_gym_fk"],
+  ["memberships", "membership_packages", "memberships_membership_package_id_fkey"],
+])
+  assert.deepEqual(
+    (await relationships(source, target)).map((fk) => fk.conname),
+    [name],
+  );
+console.log(
+  "PASS: actual FK catalog confirms both membership/branch paths and the single member/package relationships; compound branch authority retained.",
+);
 console.log(
   "PASS: all actual migrations 0-35 apply; actual legacy import backfill, retained synthetic history, old RPC signatures, offline imports, conversion retry, original transport phones, branch-drift history and conversation deletion checked. Supabase auth/storage infrastructure is mocked; this is single-connection PGlite.",
 );

@@ -150,7 +150,7 @@ export async function getMemberHistory(
   const { data, error } = await supabase
     .from("memberships")
     .select(
-      "*, member:members(*), conversation:conversations(*), membership_package:membership_packages(*), branch:branches(branch_name)",
+      "*, member:members(*), conversation:conversations(*), membership_package:membership_packages(*), branch:branches!memberships_branch_gym_fk(branch_name)",
     )
     .eq("gym_id", gymId)
     .eq("member_id", memberId)

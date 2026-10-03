@@ -3,6 +3,7 @@ create table auth.users(id uuid primary key);
 alter table public.branches add column country_code text;
 alter table public.branches add column timezone text;
 alter table public.branches add column branch_name text;
+alter table public.branches add constraint branches_id_gym_unique unique(id,gym_id);
 create table public.membership_packages(id uuid primary key default gen_random_uuid(),
   gym_id uuid not null references public.gyms(id), branch_id uuid not null references public.branches(id),
   package_name text not null, duration_months integer not null, active boolean not null default true,
@@ -14,6 +15,8 @@ create table public.memberships(id uuid primary key default gen_random_uuid(),
   membership_package_id uuid not null references public.membership_packages(id),
   start_date date not null, expiry_date date not null check (expiry_date > start_date),
   created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+alter table public.memberships add constraint memberships_branch_gym_fk
+  foreign key(branch_id,gym_id) references public.branches(id,gym_id);
 create function public.enforce_membership_branch_consistency() returns trigger language plpgsql as $$ begin return new; end; $$;
 create trigger memberships_branch_consistency before insert or update on public.memberships
   for each row execute function public.enforce_membership_branch_consistency();
