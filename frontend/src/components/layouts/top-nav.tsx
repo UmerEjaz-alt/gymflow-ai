@@ -29,7 +29,7 @@ export function TopNav({
   gymName = null,
 }: TopNavProps) {
   return (
-    <header className="border-border bg-background/95 supports-backdrop-filter:bg-background/60 sticky top-0 z-30 flex h-[var(--app-topbar-height)] shrink-0 items-center gap-2 border-b px-3 backdrop-blur sm:px-4 xl:px-5">
+    <header className="border-border bg-background/95 supports-backdrop-filter:bg-background/60 sticky top-0 z-30 flex h-[var(--app-topbar-height,3rem)] shrink-0 items-center gap-2 border-b px-3 backdrop-blur sm:px-4 xl:px-5">
       <Button
         aria-label="Open navigation"
         className="xl:hidden"

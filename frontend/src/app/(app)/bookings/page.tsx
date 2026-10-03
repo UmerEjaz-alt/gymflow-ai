@@ -128,7 +128,7 @@ export default async function BookingsPage() {
   }
 
   return (
-    <div className="app-page mx-auto w-full max-w-screen-2xl">
+    <div className="app-page px-3 py-3 sm:px-4 sm:py-4 mx-auto w-full max-w-screen-2xl">
       <BookingsWorkspace
         gymId={gym.id}
         referenceTimeIso={new Date().toISOString()}

@@ -71,7 +71,7 @@ function StatCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="bg-card border-border app-panel flex flex-col rounded-xl border">
+    <div className="bg-card border-border app-panel p-4 flex flex-col rounded-xl border">
       <div className="mb-2 flex items-center gap-2">
         <div className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-lg">
           {icon}

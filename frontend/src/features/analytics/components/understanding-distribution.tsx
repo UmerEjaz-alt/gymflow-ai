@@ -7,7 +7,7 @@ export function UnderstandingDistribution({ metrics }: { metrics: DashboardMetri
   );
 
   return (
-    <div className="bg-card border-border app-panel flex h-full flex-col rounded-xl border">
+    <div className="bg-card border-border app-panel p-4 flex h-full flex-col rounded-xl border">
       <h2 className="mb-4 text-lg font-semibold tracking-tight">
         Conversation Stage Analytics
       </h2>

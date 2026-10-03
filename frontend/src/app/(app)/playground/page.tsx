@@ -133,9 +133,9 @@ async function runPipeline(
 /** Internal AI Playground — developer-only tool for testing the pipeline. */
 export default function PlaygroundPage() {
   return (
-    <div className="app-page mx-auto w-full max-w-3xl">
+    <div className="app-page px-3 py-3 sm:px-4 sm:py-4 mx-auto w-full max-w-3xl">
       {/* Page header */}
-      <div className="app-page-header flex items-center gap-3">
+      <div className="app-page-header mb-4 flex items-center gap-3">
         <div className="bg-muted grid size-9 shrink-0 place-items-center rounded-lg">
           <FlaskConical aria-hidden className="size-4" />
         </div>
@@ -147,7 +147,7 @@ export default function PlaygroundPage() {
         </div>
       </div>
 
-      <div className="border-border bg-card app-panel rounded-xl border">
+      <div className="border-border bg-card app-panel p-4 rounded-xl border">
         <Playground onRun={runPipeline} />
       </div>
     </div>

@@ -20,8 +20,8 @@ export default async function MediaPage() {
     getTrainers(resolved.gym.id, resolved.branch.id),
   ]);
   return (
-    <div className="app-page mx-auto w-full max-w-4xl">
-      <div className="app-page-header flex items-center gap-3">
+    <div className="app-page px-3 py-3 sm:px-4 sm:py-4 mx-auto w-full max-w-4xl">
+      <div className="app-page-header mb-4 flex items-center gap-3">
         <div className="bg-muted grid size-9 place-items-center rounded-lg">
           <Images className="size-4" />
         </div>

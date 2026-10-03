@@ -23,7 +23,7 @@ export default async function AnalyticsPage() {
   // Unassigned mode: analytics are branch-scoped; unassigned conversations have no branch.
   if (resolved.isUnassigned) {
     return (
-      <div className="app-page mx-auto w-full max-w-6xl">
+      <div className="app-page px-3 py-3 sm:px-4 sm:py-4 mx-auto w-full max-w-6xl">
         <div className="mb-6 flex items-center gap-3">
           <div className="bg-muted grid size-9 shrink-0 place-items-center rounded-lg">
             <BarChart3 aria-hidden className="size-4" />
@@ -54,7 +54,7 @@ export default async function AnalyticsPage() {
   );
 
   return (
-    <div className="app-page mx-auto w-full max-w-6xl space-y-4">
+    <div className="app-page px-3 py-3 sm:px-4 sm:py-4 mx-auto w-full max-w-6xl space-y-4">
       <div className="flex items-center gap-3">
         <div className="bg-muted grid size-9 shrink-0 place-items-center rounded-lg">
           <BarChart3 aria-hidden className="size-4" />
@@ -91,7 +91,7 @@ export default async function AnalyticsPage() {
 
 function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="app-page mx-auto w-full">
+    <div className="app-page px-3 py-3 sm:px-4 sm:py-4 mx-auto w-full">
       <div className="border-border rounded-lg border bg-red-500/10 px-4 py-3 text-sm text-red-700">
         {message}
       </div>

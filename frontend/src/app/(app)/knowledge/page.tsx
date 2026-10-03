@@ -101,8 +101,8 @@ export default async function KnowledgePage() {
   const loadError =
     offers.error ?? packages.error ?? allPackages.error ?? branches.error;
   return (
-    <div className="app-page mx-auto w-full max-w-3xl">
-      <div className="app-page-header flex items-center gap-3">
+    <div className="app-page px-3 py-3 sm:px-4 sm:py-4 mx-auto w-full max-w-3xl">
+      <div className="app-page-header mb-4 flex items-center gap-3">
         <div className="bg-muted grid size-9 place-items-center rounded-lg">
           <Tag className="size-4" />
         </div>
@@ -121,7 +121,7 @@ export default async function KnowledgePage() {
           Could not load offers: {loadError}
         </p>
       ) : null}
-      <div className="border-border bg-card app-panel rounded-xl border">
+      <div className="border-border bg-card app-panel p-4 rounded-xl border">
         <OffersManager
           gymId={resolved.gym.id}
           activeBranch={

@@ -283,7 +283,7 @@ export function BookingsWorkspace({
   }
 
   return (
-    <div className="flex flex-col gap-[var(--app-section-gap)]">
+    <div className="flex flex-col gap-[var(--app-section-gap,1rem)]">
       {/* Header */}
       <BookingsHeader
         branchName={activeBranch.branch_name}
