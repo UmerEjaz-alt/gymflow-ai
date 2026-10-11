@@ -1,4 +1,9 @@
 "use server";
+import { repairSimulatorPhone } from "@/services/simulator-identity.server";
+
+export async function correctSimulatorPhone(conversationId: string, phone: string) {
+  return repairSimulatorPhone(conversationId, phone);
+}
 
 import {
   getInboxThreadSnapshot,

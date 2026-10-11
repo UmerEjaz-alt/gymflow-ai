@@ -5,6 +5,7 @@ import {
   parseImportDate,
 } from "@/lib/member-import";
 import { normalizePhoneNumber } from "@/lib/phone-number";
+import { phoneShape } from "@/lib/member-phone-diagnostics";
 import type { Branch } from "@/types/branch";
 import { getMembershipPackages } from "@/services/membership-package.server";
 import type { Membership } from "@/types/membership";
@@ -222,8 +223,30 @@ export async function convertConversationToMember(input: {
   if (
     !phone.e164 ||
     (provided.e164 !== phone.e164 && international?.e164 !== phone.e164)
-  )
+  ) {
+    // Temporary failure-only diagnostics. No raw phones, names or phone hashes.
+    console.warn("member_conversion_phone_check", {
+      stage: "server_service_before_rpc",
+      requestId: /^[0-9a-f-]{36}$/i.test(input.requestId) ? input.requestId : null,
+      conversationId: input.conversationId,
+      source: conversation.source,
+      country: /^[A-Za-z]{2}$/.test(branch.country_code ?? "")
+        ? branch.country_code.toUpperCase()
+        : null,
+      stored: phoneShape(conversation.customer_phone),
+      submitted: phoneShape(input.customerPhone),
+      authoritativeInput: phoneShape(authoritative),
+      normalizedStored: phoneShape(phone.e164),
+      normalizedSubmitted: phoneShape(provided.e164),
+      internationalSubmitted: phoneShape(international?.e164 ?? null),
+      storedError: phone.error,
+      submittedError: provided.error,
+      rawEqual: conversation.customer_phone === input.customerPhone,
+      providedMatches: Boolean(phone.e164 && provided.e164 === phone.e164),
+      internationalMatches: Boolean(phone.e164 && international?.e164 === phone.e164),
+    });
     return { data: null, error: "Phone must match this conversation." };
+  }
   const result = await registerMember(
     {
       requestId: input.requestId,

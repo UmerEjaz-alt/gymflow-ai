@@ -14,6 +14,12 @@ const { build } = await import(
 );
 const root = fileURLToPath(new URL("../", import.meta.url));
 const actions = `
+export async function correctSimulatorPhone(id,phone) {
+  const c=window.fixture.conversations.find(c=>c.id===id);
+  if(!phone.startsWith('+'))return {error:'Use a number beginning with +, or configure this branch’s default phone country.'};
+  c.customer_phone=phone;
+  return {phone,error:null};
+}
 export async function refreshInboxThread(id) {
   const state = window.fixture;
   state.refreshes.push(id);
@@ -48,7 +54,7 @@ const entry = `
 import {createRoot} from 'react-dom/client';
 import {ConversationSimulator} from './src/features/conversation-simulator/components/conversation-simulator';
 const c=(id,name,source='whatsapp',status='active')=>({id,customer_name:name,customer_phone:'+923001234567',source,status,ai_enabled:true,control_version:0,branch_id:null,whatsapp_endpoint_id:null,gym_id:'fixture-gym',last_message_at:new Date().toISOString(),created_at:new Date().toISOString(),updated_at:new Date().toISOString(),lead_stage:'new_lead',messages:[{id:id+'-inbound',conversation_id:id,sender_type:'customer',message_type:'text',content:'Customer message '+name,metadata:{},created_at:new Date().toISOString()}]});
-window.fixture={conversations:[c('A','Customer A'),c('B','Customer B'),c('S','Simulator','simulator'),c('C','Closed customer','whatsapp','closed')],requests:[],controls:[],refreshes:[],expired:false,interruptOnce:false};
+window.fixture={conversations:[c('A','Customer A'),c('B','Customer B'),{...c('S','Simulator','simulator'),customer_phone:'03001234567'},c('C','Closed customer','whatsapp','closed')],requests:[],controls:[],refreshes:[],expired:false,interruptOnce:false};
 createRoot(document.getElementById('root')).render(<ConversationSimulator initialConversations={structuredClone(window.fixture.conversations)} activeEndpoints={[]} branches={[]} onLoadMessages={async(id)=>({data:window.fixture.conversations.find(c=>c.id===id).messages,error:null})} onCreateCustomer={async()=>({})} onSendMessage={async(id,text)=>({messages:[...window.fixture.conversations.find(c=>c.id===id).messages,{id:'sim-reply',sender_type:'ai',message_type:'text',metadata:{},content:'Simulator response: '+text,created_at:new Date().toISOString()}]})} />);
 `;
 const bundle = await build({
@@ -278,6 +284,33 @@ try {
     assert.equal(await page.$('input[aria-label="Your WhatsApp reply"]'), null);
     if (width < 1024) await page.click('button[aria-label="Back to conversations"]');
     await clickText("Simulator");
+    await clickText("Correct phone");
+    await clickText("Save phone");
+    await hasText("Use a number beginning with +");
+    await page.$eval('input[name="simulator-phone"]', (input) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      ).set;
+      setter.call(input, "+923001234567");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickText("Save phone");
+    await page.waitForFunction(
+      () => !document.querySelector('input[name="simulator-phone"]'),
+    );
+    assert.equal(
+      await page.evaluate(
+        () => window.fixture.conversations.find((c) => c.id === "S").customer_phone,
+      ),
+      "+923001234567",
+    );
+    assert.equal(
+      await page.evaluate(
+        () => window.fixture.conversations.find((c) => c.id === "S").control_version,
+      ),
+      0,
+    );
     await page.waitForSelector('input[aria-label="Customer message"]');
     await page.type('input[aria-label="Customer message"]', "Test simulator");
     await page.click('button[aria-label="Send message"]');

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyMemberContext } from "./member-context-harness.mjs";
+import { verifySimulatorIdentity } from "./simulator-identity-harness.mjs";
 
 /** Actual registration/import/conversion services, with SQL-backed Supabase adapter. */
 export async function verifyMemberServices(db, fixture) {
@@ -352,6 +353,56 @@ export async function verifyMemberServices(db, fixture) {
       "923009998888",
     );
     // Exercise the real service and RPC together, preserving raw identities.
+    await db.exec("reset role");
+    const localConversation = crypto.randomUUID();
+    await q("update branches set country_code=null where id=$1", [branch]);
+    await q(
+      "insert into conversations(id,gym_id,branch_id,customer_phone,source) values($1,$2,$3,'03001234567','simulator')",
+      [localConversation, gym, branch],
+    );
+    await db.exec("set role authenticated");
+    const localPayload = {
+      conversationId: localConversation,
+      membershipPackageId: pkg,
+      customerName: "Local Diagnostics",
+      customerPhone: "03001234567",
+      startDate: "2026-01-01",
+      requestId: crypto.randomUUID(),
+    };
+    const beforeRpc = calls.length;
+    const warn = console.warn;
+    let diagnostic;
+    console.warn = (_, details) => {
+      diagnostic = details;
+    };
+    try {
+      assert.equal(
+        (await service.convertConversationToMember(localPayload)).error,
+        "Phone must match this conversation.",
+      );
+      assert.equal(
+        calls.length,
+        beforeRpc,
+        "Identical local input/null country fails before any RPC",
+      );
+      assert.equal(diagnostic.rawEqual, true);
+      assert.equal(diagnostic.normalizedStored, null);
+      assert.equal(diagnostic.normalizedSubmitted, null);
+      assert(!JSON.stringify(diagnostic).includes(localPayload.customerPhone));
+    } finally {
+      console.warn = warn;
+    }
+    await db.exec("reset role");
+    await q("update branches set country_code='PK' where id=$1", [branch]);
+    await db.exec("set role authenticated");
+    assert.match(
+      (await service.convertConversationToMember(localPayload)).error,
+      /Member phone must match the authoritative conversation phone/,
+      "Configuring country alone still leaves the raw local identity rejected by SQL",
+    );
+    console.log(
+      "PASS: identical local simulator phone/null country reproduces exact pre-RPC error with safe diagnostics; configured-country local identity exposes separate SQL guard.",
+    );
     const targetPhone = "+923001234567";
     let simulatorMember;
     for (const [source, raw, submitted, country] of [
@@ -431,6 +482,7 @@ export async function verifyMemberServices(db, fixture) {
     );
     assert(calls.every((name) => name === "register_member_membership"));
     await verifyMemberContext(db, fixture, client);
+    await verifySimulatorIdentity(db, fixture, service);
     const analyticsBuild = await build({
       entryPoints: [path.join(root, "src/services/analytics.server.ts")],
       bundle: true,

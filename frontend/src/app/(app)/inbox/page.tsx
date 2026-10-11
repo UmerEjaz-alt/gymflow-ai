@@ -117,7 +117,11 @@ async function createSimulatedCustomer(
       });
       return result.error
         ? { error: result.error }
-        : { conversationId: result.data!.id };
+        : {
+            conversationId: result.data!.id,
+            phone: result.data!.customer_phone,
+            branchId: result.data!.branch_id,
+          };
     }
   }
 
@@ -131,7 +135,13 @@ async function createSimulatedCustomer(
     customer_phone: phone.trim(),
     source: "simulator",
   });
-  return result.error ? { error: result.error } : { conversationId: result.data!.id };
+  return result.error
+    ? { error: result.error }
+    : {
+        conversationId: result.data!.id,
+        phone: result.data!.customer_phone,
+        branchId: result.data!.branch_id,
+      };
 }
 
 /**

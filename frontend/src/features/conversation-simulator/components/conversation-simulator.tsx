@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { normalizePhoneNumber } from "@/lib/phone-number";
 import type { Branch } from "@/types/branch";
 import type { Conversation } from "@/types/conversation";
 import type { Message } from "@/types/message";
@@ -29,6 +30,7 @@ import {
   returnConversationToAI,
   sendOwnerMessage,
   refreshInboxThread,
+  correctSimulatorPhone,
 } from "@/app/(app)/inbox/actions";
 
 // ---------------------------------------------------------------------------
@@ -47,7 +49,12 @@ type Props = {
     name: string,
     phone: string,
     endpointId: string | null,
-  ) => Promise<{ conversationId?: string; error?: string }>;
+  ) => Promise<{
+    conversationId?: string;
+    phone?: string;
+    branchId?: string | null;
+    error?: string;
+  }>;
   onLoadMessages: (
     conversationId: string,
   ) => Promise<{ data: Message[] | null; error: string | null }>;
@@ -344,6 +351,36 @@ export function ConversationSimulator({
   }, [branches]);
 
   // Endpoint map
+  const [repairTarget, setRepairTarget] = useState<SimulatorConversation | null>(null);
+  const [repairPhone, setRepairPhone] = useState("");
+  const [repairError, setRepairError] = useState("");
+  const [repairPending, setRepairPending] = useState(false);
+  async function repairPhoneIdentity(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!repairTarget || repairPending) return;
+    setRepairPending(true);
+    setRepairError("");
+    try {
+      const result = await correctSimulatorPhone(repairTarget.id, repairPhone);
+      if (result.error || !result.phone) {
+        setRepairError(result.error ?? "Could not correct this phone.");
+        return;
+      }
+      setConversations((items) =>
+        items.map((c) =>
+          c.id === repairTarget.id ? { ...c, customer_phone: result.phone } : c,
+        ),
+      );
+      setRepairTarget(null);
+    } catch {
+      setRepairError(
+        "Connection interrupted. Reload the conversation to check the phone before trying again.",
+      );
+    } finally {
+      setRepairPending(false);
+    }
+  }
+
   const endpointById = useMemo(() => {
     const map = new Map<string, WhatsAppEndpoint>();
     for (const ep of activeEndpoints) map.set(ep.id, ep);
@@ -371,10 +408,13 @@ export function ConversationSimulator({
     const customer: SimulatorConversation = {
       id: result.conversationId,
       gym_id: "",
-      branch_id: targetEndpoint?.branch_id ?? null,
+      branch_id:
+        result.branchId !== undefined
+          ? result.branchId
+          : (targetEndpoint?.branch_id ?? null),
       whatsapp_endpoint_id: targetEpId,
       customer_name: name.trim() || null,
-      customer_phone: phone.trim(),
+      customer_phone: result.phone ?? phone.trim(),
       source: "simulator",
       status: "active",
       lead_stage: "new_lead",
@@ -609,6 +649,21 @@ export function ConversationSimulator({
               </div>
 
               {/* Destination Badge */}
+              {selected.source === "simulator" &&
+              normalizePhoneNumber(selected.customer_phone).e164 !==
+                selected.customer_phone ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setRepairTarget(selected);
+                    setRepairPhone(selected.customer_phone);
+                    setRepairError("");
+                  }}
+                >
+                  Correct phone
+                </Button>
+              ) : null}
               <div className="flex min-w-0 shrink items-center gap-1.5">
                 {selected.branch_id === null ? (
                   <span className="inline-flex max-w-36 items-center gap-1 truncate rounded-full bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-700 sm:max-w-56 dark:text-violet-400">
@@ -626,6 +681,36 @@ export function ConversationSimulator({
                 )}
               </div>
             </header>
+            <Dialog
+              open={!!repairTarget}
+              onClose={() => {
+                if (!repairPending) setRepairTarget(null);
+              }}
+              title="Correct simulator phone"
+              description="Use + international format, or a local number if this conversation’s branch has a default phone country."
+            >
+              <form onSubmit={repairPhoneIdentity} className="space-y-4">
+                <label className="block text-sm">
+                  Phone
+                  <Input
+                    name="simulator-phone"
+                    type="tel"
+                    required
+                    value={repairPhone}
+                    onChange={(event) => setRepairPhone(event.target.value)}
+                    className="mt-1"
+                  />
+                </label>
+                {repairError ? (
+                  <p role="alert" className="text-sm text-red-500">
+                    {repairError}
+                  </p>
+                ) : null}
+                <Button type="submit" disabled={repairPending}>
+                  {repairPending ? "Saving…" : "Save phone"}
+                </Button>
+              </form>
+            </Dialog>
 
             <div
               ref={scrollRef}

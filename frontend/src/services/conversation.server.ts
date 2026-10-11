@@ -8,6 +8,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { Message } from "@/types/message";
 import { normalizeConversationMessagePreviews } from "@/lib/conversation-message-query";
 import { elapsedMs, logPerformance } from "@/lib/performance-log.server";
+import { normalizePhoneNumber } from "@/lib/phone-number";
 
 type ServiceResult<T> = { data: T; error: null } | { data: null; error: string };
 export type ConversationWithMessagePreview = Conversation & { messages: Message[] };
@@ -243,6 +244,24 @@ export async function createConversation(
   payload: CreateConversationPayload,
 ): Promise<ServiceResult<Conversation>> {
   const supabase = await createServerSupabaseClient();
+
+  if (payload.source === "simulator") {
+    let country: string | null = null;
+    if (payload.branch_id) {
+      const { data: branch, error } = await supabase
+        .from("branches")
+        .select("country_code")
+        .eq("id", payload.branch_id)
+        .eq("gym_id", payload.gym_id)
+        .maybeSingle();
+      if (error || !branch)
+        return { data: null, error: "Simulator branch not found or access denied." };
+      country = branch.country_code;
+    }
+    const phone = normalizePhoneNumber(payload.customer_phone, country);
+    if (!phone.e164) return { data: null, error: phone.error! };
+    payload = { ...payload, customer_phone: phone.e164 };
+  }
 
   const { data, error } = await supabase
     .from("conversations")
