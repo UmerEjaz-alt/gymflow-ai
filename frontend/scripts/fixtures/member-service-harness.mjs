@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyMemberContext } from "./member-context-harness.mjs";
 
 /** Actual registration/import/conversion services, with SQL-backed Supabase adapter. */
 export async function verifyMemberServices(db, fixture) {
@@ -88,6 +89,30 @@ export async function verifyMemberServices(db, fixture) {
           filters.push(`${identifier(k)}=$${values.length}`);
           return query;
         },
+        lte(k, v) {
+          values.push(v);
+          filters.push(`${identifier(k)}<=$${values.length}`);
+          return query;
+        },
+        gte(k, v) {
+          values.push(v);
+          filters.push(`${identifier(k)}>=$${values.length}`);
+          return query;
+        },
+        gt(k, v) {
+          values.push(v);
+          filters.push(`${identifier(k)}>$${values.length}`);
+          return query;
+        },
+        lt(k, v) {
+          values.push(v);
+          filters.push(`${identifier(k)}<$${values.length}`);
+          return query;
+        },
+        limit(n) {
+          query.maxRows = n;
+          return query;
+        },
         order(k, options) {
           order = ` order by ${identifier(k)} ${options?.ascending === false ? "desc" : "asc"}`;
           return query;
@@ -118,15 +143,30 @@ export async function verifyMemberServices(db, fixture) {
                   : "")
               : "t.*";
           return q(
-            `select ${countOnly ? "count(*)::int n" : columns} from ${table} t${join}${filters.length ? " where " + filters.join(" and ") : ""}${order}`,
+            `select ${countOnly ? "count(*)::int n" : columns} from ${table} t${join}${filters.length ? " where " + filters.join(" and ") : ""}${order}${query.maxRows ? ` limit ${query.maxRows}` : ""}`,
             values,
           )
             .then(
-              (result) => ({
-                data: one ? (result.rows[0] ?? null) : result.rows,
-                count: countOnly ? result.rows[0].n : null,
-                error: null,
-              }),
+              (result) => {
+                // PostgREST returns DATE as YYYY-MM-DD, unlike PGlite's Date.
+                const rows = result.rows.map((row) =>
+                  Object.fromEntries(
+                    Object.entries(row).map(([key, value]) => [
+                      key,
+                      value instanceof Date
+                        ? key.endsWith("_date")
+                          ? value.toISOString().slice(0, 10)
+                          : value.toISOString()
+                        : value,
+                    ]),
+                  ),
+                );
+                return {
+                  data: one ? (rows[0] ?? null) : rows,
+                  count: countOnly ? result.rows[0].n : null,
+                  error: null,
+                };
+              },
               (error) => ({ data: null, error: { message: error.message } }),
             )
             .then(resolve, reject);
@@ -311,7 +351,86 @@ export async function verifyMemberServices(db, fixture) {
         .customer_phone,
       "923009998888",
     );
+    // Exercise the real service and RPC together, preserving raw identities.
+    const targetPhone = "+923001234567";
+    let simulatorMember;
+    for (const [source, raw, submitted, country] of [
+      ["simulator", "923001234567", targetPhone, null],
+      ["simulator", "923001234567", "923001234567", null],
+      ["simulator", targetPhone, "923001234567", "PK"],
+      ["simulator", "923001234567", "03001234567", "PK"],
+      ["whatsapp", "923001234567", targetPhone, null],
+      ["whatsapp", "923001234567", "03001234567", "PK"],
+    ]) {
+      await db.exec("reset role");
+      await q("update branches set country_code=$1 where id=$2", [country, branch]);
+      const conversationId = crypto.randomUUID();
+      await q(
+        "insert into conversations(id,gym_id,branch_id,customer_phone,source,lead_stage) values($1,$2,$3,$4,$5,'qualified')",
+        [conversationId, gym, branch, raw, source],
+      );
+      await db.exec("set role authenticated");
+      const payload = {
+        conversationId,
+        membershipPackageId: pkg,
+        customerName: "Format Member",
+        customerPhone: submitted,
+        startDate: `2030-${String(simulatorMember ? simulatorMember.month + 2 : 1).padStart(2, "0")}-01`,
+        requestId: crypto.randomUUID(),
+      };
+      const wrong = await service.convertConversationToMember({
+        ...payload,
+        customerPhone: "+923001234568",
+      });
+      assert.match(wrong.error, /Phone must match/);
+      // Calling the RPC directly must not bypass the same identity check.
+      const bypass = await client.rpc("register_member_membership", {
+        p_request_id: payload.requestId,
+        p_branch_id: branch,
+        p_name: payload.customerName,
+        p_phone_e164: "+923001234568",
+        p_email: null,
+        p_package_id: pkg,
+        p_start_date: payload.startDate,
+        p_expiry_date: null,
+        p_source: "lead_conversion",
+        p_existing_member_id: null,
+        p_conversation_id: conversationId,
+      });
+      assert.match(bypass.error.message, /authoritative conversation phone/);
+      const result = await service.convertConversationToMember(payload);
+      assert.equal(result.error, null);
+      const retry = await service.convertConversationToMember(payload);
+      assert.equal(retry.data.id, result.data.id);
+      const linked = (
+        await q("select * from conversations where id=$1", [conversationId])
+      ).rows[0];
+      assert.equal(linked.customer_phone, raw);
+      assert.equal(linked.member_id, result.data.member_id);
+      assert.equal(linked.lead_stage, "member");
+      if (simulatorMember) assert.equal(linked.member_id, simulatorMember.id);
+      simulatorMember = {
+        id: linked.member_id,
+        month: simulatorMember ? simulatorMember.month + 2 : 1,
+      };
+    }
+    await db.exec("reset role");
+    await q("update branches set country_code='PK' where id=$1", [branch]);
+    await db.exec("set role authenticated");
+    assert.equal(
+      (
+        await q(
+          "select count(*)::int n from members where gym_id=$1 and phone_e164=$2",
+          [gym, targetPhone],
+        )
+      ).rows[0].n,
+      1,
+    );
+    console.log(
+      "PASS: simulator/WhatsApp +/digits/local-input conversions, server and RPC mismatch rejection, member reuse, linkage, lead state, idempotency, unchanged transport phones.",
+    );
     assert(calls.every((name) => name === "register_member_membership"));
+    await verifyMemberContext(db, fixture, client);
     const analyticsBuild = await build({
       entryPoints: [path.join(root, "src/services/analytics.server.ts")],
       bundle: true,

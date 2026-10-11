@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 
-// Actual, unedited migrations 0-35; only Supabase-owned auth/storage scaffolding
+// Actual, unedited migrations 0-latest; only Supabase-owned auth/storage scaffolding
 // is substituted. Never reads application env files or connects to a database.
 const runtime = new URL(
   "../.tmp-member-db/node_modules/@electric-sql/pglite/dist/",
@@ -69,6 +69,8 @@ await db.exec(
     "utf8",
   ),
 );
+for (const file of files.filter((n) => n > "20250101000035_add_canonical_members.sql"))
+  await db.exec(await readFile(new URL(file, directory), "utf8"));
 assert.equal(
   (await row("select source from conversations where id=$1", [oldConversation])).source,
   "import",
@@ -162,6 +164,6 @@ console.log(
   "PASS: actual FK catalog confirms both membership/branch paths and the single member/package relationships; compound branch authority retained.",
 );
 console.log(
-  "PASS: all actual migrations 0-35 apply; actual legacy import backfill, retained synthetic history, old RPC signatures, offline imports, conversion retry, original transport phones, branch-drift history and conversation deletion checked. Supabase auth/storage infrastructure is mocked; this is single-connection PGlite.",
+  "PASS: all actual migrations 0-latest apply; actual legacy import backfill, retained synthetic history, old RPC signatures, offline imports, conversion retry, original transport phones, branch-drift history and conversation deletion checked. Supabase auth/storage infrastructure is mocked; this is single-connection PGlite.",
 );
 await db.close();

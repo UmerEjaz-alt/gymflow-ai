@@ -18,6 +18,10 @@ import type { Facility } from "@/types/facility";
 import type { MediaAsset, PendingMediaReference } from "@/types/media-asset";
 import type { GroundedOffer } from "@/types/offer";
 import type { ConversationContext } from "@/services/conversation-manager.server";
+import {
+  loadMemberContext,
+  type MemberContext,
+} from "@/services/member-context.server";
 import type { Message } from "@/types/message";
 import { getGymById } from "@/services/gym.server";
 import { getBranches } from "@/services/branch.server";
@@ -116,6 +120,7 @@ export type ResolvedTurnContext = {
 };
 
 export type KnowledgeContext = {
+  memberContext?: MemberContext | null;
   /** The gym profile (business-level: name, logo, email). Always present. */
   gym: Gym | null;
   /**
@@ -1047,6 +1052,9 @@ export async function buildKnowledgeContext(
   const branchResolutionMs = branchResolution.elapsedMs;
 
   const branchId = branch?.id ?? null;
+  const memberContextPromise = ctx.conversation.member_id
+    ? loadMemberContext(ctx.conversation, branch).catch(() => null)
+    : Promise.resolve(null);
   const pendingMediaPromise = (async () => {
     const startedAt = performance.now();
     const result = ctx.automationInstruction
@@ -1359,6 +1367,7 @@ export async function buildKnowledgeContext(
 
   return {
     data: {
+      memberContext: await memberContextPromise,
       gym,
       branch,
       isMultiBranch,

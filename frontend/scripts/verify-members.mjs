@@ -78,6 +78,31 @@ for (const [c, n, p] of [
   );
 }
 await db.exec(await migration35());
+assert.equal(
+  (await row("select member_comparison_phone('923001234567','simulator') phone")).phone,
+  null,
+  "Migration 35 reproduces the simulator identity rejection",
+);
+await db.exec(
+  await (
+    await import("node:fs/promises")
+  ).readFile(
+    new URL(
+      "../../supabase/migrations/20250101000036_fix_simulator_member_phone_comparison.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+assert.equal(
+  (await row("select member_comparison_phone('923001234567','simulator') phone")).phone,
+  "+923001234567",
+);
+assert.equal(
+  (await row("select member_comparison_phone('923001234567','import') phone")).phone,
+  null,
+  "Do not broaden ambiguous legacy/import identity matching",
+);
 assert.equal((await row("select count(*)::integer n from memberships")).n, 5);
 assert.equal(
   (await row("select member_id from conversations where id=$1", [legacyA])).member_id,

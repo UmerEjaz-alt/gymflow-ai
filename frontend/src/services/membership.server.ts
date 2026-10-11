@@ -208,17 +208,21 @@ export async function convertConversationToMember(input: {
   if (!branch) return { data: null, error: "Conversation branch not found." };
   // The browser cannot replace the transport identity. Normalize for comparison only.
   const authoritative =
-    conversation.source === "whatsapp" && /^\d+$/.test(conversation.customer_phone)
+    ["whatsapp", "simulator"].includes(conversation.source) &&
+    /^[1-9]\d{7,14}$/.test(conversation.customer_phone.trim())
       ? `+${conversation.customer_phone}`
       : conversation.customer_phone;
   const phone = normalizePhoneNumber(authoritative, branch.country_code);
-  const provided = normalizePhoneNumber(
-    conversation.source === "whatsapp" && /^\d+$/.test(input.customerPhone.trim())
-      ? `+${input.customerPhone.trim()}`
-      : input.customerPhone,
-    branch.country_code,
-  );
-  if (!phone.e164 || provided.e164 !== phone.e164)
+  const provided = normalizePhoneNumber(input.customerPhone, branch.country_code);
+  // A country-code-prefixed value without '+' is another representation of
+  // the authoritative international identity, even without a default country.
+  const international = /^[1-9]\d{7,14}$/.test(input.customerPhone.trim())
+    ? normalizePhoneNumber(`+${input.customerPhone.trim()}`)
+    : null;
+  if (
+    !phone.e164 ||
+    (provided.e164 !== phone.e164 && international?.e164 !== phone.e164)
+  )
     return { data: null, error: "Phone must match this conversation." };
   const result = await registerMember(
     {
